@@ -1,0 +1,145 @@
+.app {
+  min-height: 100vh;
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  
+  &__header {
+    background: white;
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    padding: 32px 24px;
+    text-align: center;
+    
+    h1 {
+      margin: 0 0 8px 0;
+      font-size: 32px;
+      color: #333;
+    }
+    
+    p {
+      margin: 0;
+      color: #666;
+      font-size: 16px;
+    }
+  }
+  
+  &__main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 48px 24px;
+  }
+  
+  &__upload-section {
+    margin-bottom: 24px;
+  }
+  
+  &__controls {
+    display: flex;
+    align-items: flex-end;
+    gap: 16px;
+    margin-top: 24px;
+    padding: 24px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+  }
+  
+  &__provider-select {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    
+    label {
+      font-weight: 500;
+      color: #333;
+    }
+    
+    select {
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      font-size: 16px;
+      background: white;
+      cursor: pointer;
+      
+      &:disabled {
+        opacity: 0.5;
+        cursor: not-allowed;
+      }
+    }
+  }
+  
+  &__transcribe-btn {
+    padding: 12px 32px;
+    background: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 16px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.3s ease;
+    
+    &:hover:not(:disabled) {
+      background: #45a049;
+    }
+    
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+  
+  &__error {
+    margin-top: 16px;
+    padding: 16px;
+    background: #ffebee;
+    color: #c62828;
+    border-radius: 4px;
+    border-left: 4px solid #c62828;
+  }
+  
+  &__media-section {
+    margin-bottom: 24px;
+  }
+  
+  &__transcript-section {
+    margin-bottom: 24px;
+  }
+  
+  &__transcript-controls {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 16px;
+  }
+  
+  &__view-toggle {
+    padding: 8px 16px;
+    background: white;
+    border: 2px solid #ddd;
+    border-radius: 4px;
+    font-size: 14px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    
+    &:hover {
+      border-color: #2196F3;
+    }
+    
+    &.active {
+      background: #2196F3;
+      color: white;
+      border-color: #2196F3;
+    }
+  }
+  
+  &__footer {
+    text-align: center;
+    padding: 24px;
+    color: white;
+    
+    p {
+      margin: 0;
+      opacity: 0.9;
+    }
+  }
+}
