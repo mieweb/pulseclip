@@ -3,6 +3,7 @@ import cors from 'cors';
 import multer from 'multer';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { existsSync, statSync } from 'fs';
 import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
 import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache } from './cache.js';
@@ -144,6 +145,28 @@ app.post('/api/transcribe', async (req, res) => {
       message: error instanceof Error ? error.message : 'Unknown error',
     });
   }
+});
+
+// Get file info by filename
+app.get('/api/file/:filename', (req, res) => {
+  const { filename } = req.params;
+  const localPath = join(__dirname, '../uploads', filename);
+  
+  // Check if file exists
+  if (!existsSync(localPath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+  
+  const stats = statSync(localPath);
+  const fileUrl = `http://localhost:${port}/uploads/${filename}`;
+  
+  res.json({
+    success: true,
+    filename,
+    url: fileUrl,
+    localPath,
+    size: stats.size,
+  });
 });
 
 // Cache management endpoints

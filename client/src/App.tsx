@@ -1,13 +1,17 @@
 import { useState, useRef, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { FileUpload } from './components/FileUpload';
 import { MediaPlayer } from './components/MediaPlayer';
 import { TranscriptViewer } from './components/TranscriptViewer';
 import type { Provider, TranscriptionResult } from './types';
 import './App.scss';
 
-type ViewState = 'upload' | 'ready' | 'transcribing' | 'viewing';
+type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
 
 function App() {
+  const { filename: urlFilename } = useParams<{ filename: string }>();
+  const navigate = useNavigate();
+  
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
@@ -17,16 +21,42 @@ function App() {
   const [error, setError] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
+  const hasAutoTranscribed = useRef(false);
 
   // Determine current view state
-  const viewState: ViewState = transcribing
+  const viewState: ViewState = loading
+    ? 'loading'
+    : transcribing
     ? 'transcribing'
     : transcriptionResult
     ? 'viewing'
     : mediaUrl
     ? 'ready'
     : 'upload';
+
+  // Load file from URL parameter on mount
+  useEffect(() => {
+    if (urlFilename && !mediaUrl) {
+      setLoading(true);
+      fetch(`/api/file/${urlFilename}`)
+        .then((res) => {
+          if (!res.ok) throw new Error('File not found');
+          return res.json();
+        })
+        .then((data) => {
+          setMediaUrl(data.url);
+          setMediaFilename(data.filename);
+        })
+        .catch((err) => {
+          console.error('Failed to load file:', err);
+          setError('File not found. It may have been deleted.');
+          navigate('/', { replace: true });
+        })
+        .finally(() => setLoading(false));
+    }
+  }, [urlFilename, mediaUrl, navigate]);
 
   // Load available providers on mount
   useEffect(() => {
@@ -73,11 +103,15 @@ function App() {
   }, []);
 
   const handleFileUploaded = (url: string, filename: string) => {
+    // Reset auto-transcribe flag for new file
+    hasAutoTranscribed.current = false;
     setMediaUrl(url);
     setMediaFilename(filename);
     setTranscriptionResult(null);
     setError(null);
     setMenuOpen(false);
+    // Navigate to file-specific URL
+    navigate(`/file/${filename}`, { replace: true });
   };
 
   const handleTranscribe = async (skipCache = false) => {
@@ -127,7 +161,38 @@ function App() {
     setTranscriptionResult(null);
     setError(null);
     setMenuOpen(false);
+    navigate('/', { replace: true });
   };
+
+  // Auto-transcribe when file and provider are ready (first load only)
+  useEffect(() => {
+    if (
+      mediaUrl &&
+      selectedProvider &&
+      !transcribing &&
+      !transcriptionResult &&
+      !loading &&
+      !hasAutoTranscribed.current
+    ) {
+      hasAutoTranscribed.current = true;
+      handleTranscribe(false);
+    }
+  }, [mediaUrl, selectedProvider, transcribing, transcriptionResult, loading]);
+
+  // Loading view - when restoring file from URL
+  if (viewState === 'loading') {
+    return (
+      <div className="app app--upload">
+        <div className="app__upload-container">
+          <h1 className="app__title">🎙️ Voice Transcription</h1>
+          <div className="app__loading">
+            <div className="app__spinner" />
+            <p>Loading file...</p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   // Upload view - centered upload area
   if (viewState === 'upload') {

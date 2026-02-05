@@ -44,6 +44,11 @@
     color: #ddd;
     word-wrap: break-word;
     overflow-wrap: break-word;
+    
+    &:focus {
+      outline: none;
+      background: rgba(255, 255, 255, 0.02);
+    }
   }
   
   &__word {
@@ -58,10 +63,25 @@
       color: white;
     }
     
+    &--cursor {
+      outline: 2px solid #2196F3;
+      outline-offset: 1px;
+    }
+    
+    &--selected {
+      background: rgba(33, 150, 243, 0.4);
+      color: white;
+    }
+    
     &--active {
       background: #2196F3;
       color: white;
       font-weight: 500;
+    }
+    
+    // When both cursor and active
+    &--cursor.transcript-viewer__word--active {
+      outline-color: #fff;
     }
   }
   
