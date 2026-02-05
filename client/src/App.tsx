@@ -4,6 +4,7 @@ import { FileUpload } from './components/FileUpload';
 import { MediaPlayer } from './components/MediaPlayer';
 import { TranscriptViewer } from './components/TranscriptViewer';
 import type { Provider, TranscriptionResult } from './types';
+import { isDebugEnabled, toggleDebug } from './debug';
 import './App.scss';
 
 type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
@@ -22,6 +23,7 @@ function App() {
   const [showRaw, setShowRaw] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [debugMode, setDebugMode] = useState(isDebugEnabled());
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
   const hasAutoTranscribed = useRef(false);
 
@@ -266,6 +268,16 @@ function App() {
         <div className="app__menu">
           <button className="app__menu-item" onClick={handleNewFile}>
             📁 New File
+          </button>
+          <button
+            className="app__menu-item"
+            onClick={() => {
+              const newState = toggleDebug();
+              setDebugMode(newState);
+              setMenuOpen(false);
+            }}
+          >
+            {debugMode ? '🔇 Disable Debug' : '🔊 Enable Debug'}
           </button>
         </div>
       )}

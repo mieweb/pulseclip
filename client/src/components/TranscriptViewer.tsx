@@ -1,6 +1,7 @@
 import type { FC, RefObject } from 'react';
 import { useEffect, useState, useCallback, useRef } from 'react';
 import type { Transcript, TranscriptWord } from '../types';
+import { debug } from '../debug';
 import './TranscriptViewer.scss';
 
 interface TranscriptViewerProps {
@@ -28,6 +29,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [isSeeking, setIsSeeking] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const userSetCursor = useRef<number | null>(null);
+  const wordPlaybackEndMs = useRef<number | null>(null);
 
   // Sync cursor with active word when media is playing (not seeking)
   useEffect(() => {
@@ -78,10 +80,21 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     const handleTimeUpdate = () => {
       const timeMs = media.currentTime * 1000;
 
+      // Stop playback if we've reached the end of single-word playback
+      if (wordPlaybackEndMs.current !== null && timeMs >= wordPlaybackEndMs.current) {
+        debug('Playback', `Stopping at word end (${wordPlaybackEndMs.current}ms)`);
+        media.pause();
+        wordPlaybackEndMs.current = null;
+      }
+
       // Find active word (end time is exclusive to handle adjacent words)
       const index = transcript.words.findIndex(
         (word) => timeMs >= word.startMs && timeMs < word.endMs
       );
+      if (index !== activeWordIndex) {
+        const word = index >= 0 ? transcript.words[index] : null;
+        debug('Playback', `Active word: ${word?.text ?? 'none'} (index: ${index}, time: ${timeMs.toFixed(0)}ms)`);
+      }
       setActiveWordIndex(index >= 0 ? index : null);
     };
 
@@ -90,6 +103,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   }, [transcript.words, mediaRef]);
 
   const handleWordClick = (word: TranscriptWord, index: number, e: React.MouseEvent) => {
+    debug('Click', `Word: "${word.text}" (index: ${index}, start: ${word.startMs}ms)`);
     setCursorIndex(index);
     userSetCursor.current = index;
     
@@ -104,14 +118,15 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       setSelectionAnchor(index);
       setSelection(null);
       
-      // Seek to word and play
+      // Stop current playback, seek to word, and play just that word
       const media = mediaRef.current;
       if (media) {
-        // Pause first to avoid "play() interrupted" errors
+        debug('Seek', `Seeking to ${word.startMs}ms ("${word.text}"), will stop at ${word.endMs}ms`);
         media.pause();
         media.currentTime = word.startMs / 1000;
+        wordPlaybackEndMs.current = word.endMs;
         media.play().catch((err) => {
-          // Ignore AbortError which happens when play is interrupted
+          // AbortError is expected when quickly clicking between words
           if (err.name !== 'AbortError') {
             console.error('[TranscriptViewer] Play error:', err);
           }
@@ -186,6 +201,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       if (media && word) {
         if (media.paused) {
           // Seek to cursor word and play
+          debug('Spacebar', `Play from "${word.text}" (${word.startMs}ms)`);
           media.currentTime = word.startMs / 1000;
           media.play().catch((err) => {
             if (err.name !== 'AbortError') {
@@ -194,6 +210,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           });
         } else {
           // Pause playback
+          debug('Spacebar', `Pause at ${(media.currentTime * 1000).toFixed(0)}ms`);
           media.pause();
         }
       }
