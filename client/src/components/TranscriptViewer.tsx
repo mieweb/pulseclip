@@ -7,8 +7,9 @@ import './TranscriptViewer.scss';
 interface TranscriptViewerProps {
   transcript: Transcript;
   mediaRef: RefObject<HTMLAudioElement | HTMLVideoElement>;
-  showRaw?: boolean;
+  viewMode?: 'transcript' | 'json' | 'edited-json';
   rawData?: any;
+  onHasEditsChange?: (hasEdits: boolean) => void;
 }
 
 interface SelectionRange {
@@ -79,8 +80,9 @@ function initEditableWords(transcript: Transcript): EditableWord[] {
 export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   transcript,
   mediaRef,
-  showRaw = false,
+  viewMode = 'transcript',
   rawData,
+  onHasEditsChange,
 }) => {
   // Edit mode state
   const [editedWords, setEditedWords] = useState<EditableWord[]>(() => 
@@ -142,10 +144,10 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
 
   // Auto-focus the transcript content for keyboard navigation
   useEffect(() => {
-    if (!showRaw && contentRef.current) {
+    if (viewMode === 'transcript' && contentRef.current) {
       contentRef.current.focus();
     }
-  }, [showRaw, transcript]);
+  }, [viewMode, transcript]);
 
   // Track seeking state
   useEffect(() => {
@@ -518,15 +520,42 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const activeWordCount = editedWords.filter(ew => !ew.deleted).length;
   const deletedWordCount = editedWords.length - activeWordCount;
 
-  if (showRaw && rawData) {
+  // Notify parent when hasEdits changes
+  useEffect(() => {
+    onHasEditsChange?.(hasEdits);
+  }, [hasEdits, onHasEditsChange]);
+
+  // JSON view of original transcript
+  if (viewMode === 'json') {
     return (
       <div className="transcript-viewer">
+        <div className="transcript-viewer__header">
+          <h3>Original Transcript JSON</h3>
+        </div>
         <div className="transcript-viewer__raw">
-          <h3>Raw Provider Response</h3>
-          <pre>{JSON.stringify(rawData, null, 2)}</pre>
+          <pre>{JSON.stringify(transcript, null, 2)}</pre>
         </div>
       </div>
     );
+  }
+
+  // JSON view of edited state
+  if (viewMode === 'edited-json') {
+    return (
+      <div className="transcript-viewer">
+        <div className="transcript-viewer__header">
+          <h3>Edited State JSON</h3>
+        </div>
+        <div className="transcript-viewer__raw">
+          <pre>{JSON.stringify(editedWords, null, 2)}</pre>
+        </div>
+      </div>
+    );
+  }
+
+  // Raw provider response (for debugging)
+  if (viewMode === 'transcript' && rawData === null) {
+    // This is a placeholder - rawData view handled by parent
   }
 
   return (

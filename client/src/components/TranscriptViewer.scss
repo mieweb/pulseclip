@@ -34,6 +34,44 @@
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }
+
+  &__view-buttons {
+    display: flex;
+    gap: 4px;
+  }
+
+  &__view-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.1);
+    color: #aaa;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+
+    &:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+
+    &--active {
+      background: #2196F3;
+      color: white;
+      border-color: #2196F3;
+
+      &:hover {
+        background: #1976D2;
+      }
+    }
+
+    &--disabled,
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  }
   
   &__meta {
     display: flex;

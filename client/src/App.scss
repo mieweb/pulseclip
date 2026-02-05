@@ -154,6 +154,17 @@
     color: white;
     border-color: #2196F3;
   }
+
+  &--disabled,
+  &:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+    
+    &:hover {
+      color: #aaa;
+      border-color: #3a3a5a;
+    }
+  }
 }
 
 .app__menu {

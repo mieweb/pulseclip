@@ -20,7 +20,8 @@ function App() {
   const [transcribing, setTranscribing] = useState(false);
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [showRaw, setShowRaw] = useState(false);
+  const [viewMode, setViewMode] = useState<'transcript' | 'json' | 'edited-json'>('transcript');
+  const [hasEdits, setHasEdits] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [debugMode, setDebugMode] = useState(isDebugEnabled());
@@ -318,16 +319,23 @@ function App() {
               <div className="app__transcript-toolbar">
                 <div className="app__view-toggles">
                   <button
-                    className={`app__toggle ${!showRaw ? 'app__toggle--active' : ''}`}
-                    onClick={() => setShowRaw(false)}
+                    className={`app__toggle ${viewMode === 'transcript' ? 'app__toggle--active' : ''}`}
+                    onClick={() => setViewMode('transcript')}
                   >
                     Transcript
                   </button>
                   <button
-                    className={`app__toggle ${showRaw ? 'app__toggle--active' : ''}`}
-                    onClick={() => setShowRaw(true)}
+                    className={`app__toggle ${viewMode === 'json' ? 'app__toggle--active' : ''}`}
+                    onClick={() => setViewMode('json')}
                   >
                     JSON
+                  </button>
+                  <button
+                    className={`app__toggle ${viewMode === 'edited-json' ? 'app__toggle--active' : ''}${!hasEdits ? ' app__toggle--disabled' : ''}`}
+                    onClick={() => hasEdits && setViewMode('edited-json')}
+                    disabled={!hasEdits}
+                  >
+                    Edited JSON
                   </button>
                 </div>
                 <button
@@ -340,8 +348,9 @@ function App() {
               <TranscriptViewer
                 transcript={transcriptionResult.transcript}
                 mediaRef={mediaRef}
-                showRaw={showRaw}
+                viewMode={viewMode}
                 rawData={transcriptionResult.raw}
+                onHasEditsChange={setHasEdits}
               />
             </>
           )}
