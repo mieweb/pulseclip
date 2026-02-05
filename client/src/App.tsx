@@ -44,6 +44,34 @@ function App() {
       });
   }, []);
 
+  // Handle spacebar for play/pause toggle
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      // Only handle spacebar when not typing in an input/textarea/select
+      if (e.code === 'Space' && mediaRef.current) {
+        const target = e.target as HTMLElement;
+        const isInteractiveElement = 
+          target.tagName === 'INPUT' || 
+          target.tagName === 'TEXTAREA' || 
+          target.tagName === 'SELECT' ||
+          target.tagName === 'BUTTON' ||
+          target.isContentEditable;
+        
+        if (!isInteractiveElement) {
+          e.preventDefault();
+          if (mediaRef.current.paused) {
+            mediaRef.current.play();
+          } else {
+            mediaRef.current.pause();
+          }
+        }
+      }
+    };
+
+    document.addEventListener('keydown', handleKeyDown);
+    return () => document.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
   const handleFileUploaded = (url: string, filename: string) => {
     setMediaUrl(url);
     setMediaFilename(filename);
