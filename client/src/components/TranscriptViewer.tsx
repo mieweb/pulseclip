@@ -225,6 +225,223 @@ const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply,
   );
 };
 
+/** Props for the word editor modal */
+interface WordEditorModalProps {
+  isOpen: boolean;
+  editableWord: EditableWord | null;
+  onClose: () => void;
+  onSave: (newText: string) => void;
+  onSplitSilence: (durations: number[]) => void;
+  onDelete: () => void;
+}
+
+/**
+ * Modal for editing a word or splitting a silence.
+ * For silences, enter space-separated durations (e.g., "1 1 4 1") to split.
+ */
+const WordEditorModal: FC<WordEditorModalProps> = ({
+  isOpen,
+  editableWord,
+  onClose,
+  onSave,
+  onSplitSilence,
+  onDelete,
+}) => {
+  const [inputValue, setInputValue] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  const isSilence = editableWord?.word.wordType === 'silence';
+  const durationMs = editableWord ? editableWord.word.endMs - editableWord.word.startMs : 0;
+  const durationSec = durationMs / 1000;
+
+  // Reset input when modal opens
+  useEffect(() => {
+    if (isOpen && editableWord) {
+      if (isSilence) {
+        setInputValue('');
+      } else {
+        setInputValue(editableWord.word.text);
+      }
+      setError(null);
+      // Focus input after a short delay to ensure modal is rendered
+      setTimeout(() => inputRef.current?.focus(), 50);
+    }
+  }, [isOpen, editableWord, isSilence]);
+
+  // Parse silence split input (pure function, no side effects)
+  const parseSilenceSplit = (input: string): { durations: number[]; remainder: number; error?: string } | null => {
+    const trimmed = input.trim();
+    if (!trimmed) return null;
+
+    const parts = trimmed.split(/\s+/);
+    const durations: number[] = [];
+    let total = 0;
+
+    for (const part of parts) {
+      const num = parseFloat(part);
+      if (isNaN(num) || num <= 0) {
+        return { durations: [], remainder: 0, error: `Invalid number: "${part}"` };
+      }
+      durations.push(num);
+      total += num;
+    }
+
+    if (total >= durationSec) {
+      return { durations: [], remainder: 0, error: `Total (${total.toFixed(1)}s) exceeds silence duration (${durationSec.toFixed(1)}s)` };
+    }
+
+    const remainder = durationSec - total;
+    return { durations, remainder };
+  };
+
+  const handleApply = () => {
+    if (isSilence) {
+      const parsed = parseSilenceSplit(inputValue);
+      if (parsed?.error) {
+        setError(parsed.error);
+        return;
+      }
+      if (parsed && parsed.durations.length > 0) {
+        // Add the remainder as the final segment
+        const allDurations = [...parsed.durations, parsed.remainder];
+        onSplitSilence(allDurations);
+        onClose();
+      }
+    } else {
+      const trimmed = inputValue.trim();
+      if (trimmed && trimmed !== editableWord?.word.text) {
+        onSave(trimmed);
+      }
+      onClose();
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      handleApply();
+    } else if (e.key === 'Escape') {
+      onClose();
+    }
+  };
+
+  // Close on escape (document level)
+  useEffect(() => {
+    const handleEsc = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    if (isOpen) {
+      document.addEventListener('keydown', handleEsc);
+      return () => document.removeEventListener('keydown', handleEsc);
+    }
+  }, [isOpen, onClose]);
+
+  // Click outside to close
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isOpen, onClose]);
+
+  if (!isOpen || !editableWord) return null;
+
+  // Preview for silence splitting
+  const preview = isSilence ? parseSilenceSplit(inputValue) : null;
+
+  return (
+    <div className="word-editor-overlay" role="dialog" aria-modal="true" aria-labelledby="word-editor-title">
+      <div className="word-editor" ref={modalRef}>
+        <div className="word-editor__header">
+          <h3 id="word-editor-title">
+            {isSilence ? 'Split Silence' : 'Edit Word'}
+          </h3>
+          <button className="word-editor__close" onClick={onClose} aria-label="Close editor">
+            ×
+          </button>
+        </div>
+
+        <div className="word-editor__content">
+          {isSilence ? (
+            <>
+              <p className="word-editor__info">
+                Silence duration: <strong>{durationSec.toFixed(1)}s</strong>
+              </p>
+              <p className="word-editor__hint">
+                Enter space-separated durations to split (e.g., "1 1 4 1")
+              </p>
+              <input
+                ref={inputRef}
+                type="text"
+                value={inputValue}
+                onChange={(e) => {
+                  setInputValue(e.target.value);
+                  setError(null);
+                }}
+                onKeyDown={handleKeyDown}
+                placeholder="1 2 3..."
+                aria-label="Split durations"
+                className="word-editor__input"
+              />
+              {error && <p className="word-editor__error">{error}</p>}
+              {preview && !preview.error && preview.durations.length > 0 && !error && (
+                <p className="word-editor__preview">
+                  Preview: {[...preview.durations, preview.remainder].map(d => `[${d.toFixed(1)}s]`).join(' ')}
+                </p>
+              )}
+              {preview?.error && !error && (
+                <p className="word-editor__error">{preview.error}</p>
+              )}
+            </>
+          ) : (
+            <>
+              <p className="word-editor__info">
+                Edit the word text:
+              </p>
+              <input
+                ref={inputRef}
+                type="text"
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                onKeyDown={handleKeyDown}
+                aria-label="Word text"
+                className="word-editor__input"
+              />
+            </>
+          )}
+        </div>
+
+        <div className="word-editor__footer">
+          <button className="word-editor__delete-btn" onClick={onDelete}>
+            {editableWord.deleted ? 'Restore' : 'Delete'}
+          </button>
+          <div className="word-editor__actions">
+            <button className="word-editor__cancel-btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              className="word-editor__apply-btn"
+              onClick={handleApply}
+              disabled={isSilence 
+                ? (!inputValue.trim() || !!preview?.error || !preview || preview.durations.length === 0)
+                : !inputValue.trim()}
+            >
+              {isSilence ? 'Split' : 'Save'}
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface TranscriptViewerProps {
   transcript: Transcript;
   mediaRef: RefObject<HTMLAudioElement | HTMLVideoElement>;
@@ -385,6 +602,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [isPlayingSequence, setIsPlayingSequence] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [showFillerModal, setShowFillerModal] = useState(false);
+  const [editorWordIndex, setEditorWordIndex] = useState<number | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const userSetCursor = useRef<number | null>(null);
   const isDragging = useRef<boolean>(false);
@@ -578,6 +796,80 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     debug('Edit', `${source} toggled "${ew.word.text}" to ${ew.deleted ? 'restored' : 'deleted'}`);
   }, [editedWords, pushUndo]);
 
+  // Open word editor modal
+  const openWordEditor = useCallback((index: number) => {
+    setEditorWordIndex(index);
+    debug('Editor', `Opened editor for "${editedWords[index]?.word.text}"`);
+  }, [editedWords]);
+
+  // Handle saving word text change
+  const handleEditorSave = useCallback((newText: string) => {
+    if (editorWordIndex === null) return;
+    const ew = editedWords[editorWordIndex];
+    if (!ew || newText === ew.word.text) return;
+    
+    pushUndo();
+    const newEditedWords = [...editedWords];
+    newEditedWords[editorWordIndex] = {
+      ...ew,
+      word: { ...ew.word, text: newText },
+    };
+    setEditedWords(newEditedWords);
+    setHasEdits(true);
+    debug('Editor', `Changed text from "${ew.word.text}" to "${newText}"`);
+  }, [editorWordIndex, editedWords, pushUndo]);
+
+  // Handle splitting a silence into multiple segments
+  const handleSplitSilence = useCallback((durations: number[]) => {
+    if (editorWordIndex === null) return;
+    const ew = editedWords[editorWordIndex];
+    if (!ew || ew.word.wordType !== 'silence') return;
+    
+    pushUndo();
+    
+    // Create new silence segments from the durations
+    const silenceStart = ew.word.startMs;
+    const newSilences: EditableWord[] = [];
+    let currentMs = silenceStart;
+    
+    for (let i = 0; i < durations.length; i++) {
+      const durationMs = Math.round(durations[i] * 1000);
+      const endMs = currentMs + durationMs;
+      
+      newSilences.push({
+        originalIndex: -1, // Negative indicates a split/inserted silence
+        word: {
+          text: `[${durations[i].toFixed(1)}s]`,
+          startMs: currentMs,
+          endMs: endMs,
+          wordType: 'silence',
+        },
+        deleted: false,
+        inserted: true,
+      });
+      
+      currentMs = endMs;
+    }
+    
+    // Replace the original silence with the new segments
+    const newEditedWords = [...editedWords];
+    newEditedWords.splice(editorWordIndex, 1, ...newSilences);
+    setEditedWords(newEditedWords);
+    setHasEdits(true);
+    
+    debug('Editor', `Split silence into ${durations.length} segments: ${durations.map(d => d.toFixed(1) + 's').join(', ')}`);
+  }, [editorWordIndex, editedWords, pushUndo]);
+
+  // Handle delete from editor
+  const handleEditorDelete = useCallback(() => {
+    if (editorWordIndex !== null) {
+      toggleWordDeleted(editorWordIndex, 'Editor');
+      setEditorWordIndex(null);
+      // Restore focus to transcript content after modal closes
+      setTimeout(() => contentRef.current?.focus(), 0);
+    }
+  }, [editorWordIndex, toggleWordDeleted]);
+
   const handleWordDoubleClick = (index: number, e: React.MouseEvent) => {
     e.preventDefault();
     // Don't trigger if long press already fired
@@ -589,11 +881,11 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     // Only handle left mouse button
     if (e.button !== 0) return;
     
-    // Start long press timer (500ms)
+    // Start long press timer (500ms) - opens editor instead of toggle
     longPressTriggered.current = false;
     longPressTimer.current = setTimeout(() => {
       longPressTriggered.current = true;
-      toggleWordDeleted(index, 'Long-press');
+      openWordEditor(index);
     }, 500);
     
     isDragging.current = true;
@@ -694,7 +986,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         return updated;
       });
       setHasEdits(true);
-      debug('Edit', `Pasted ${clipboard.words.length} words at position ${insertIndex}`);
+      debug('Edit', `Pasted ${clipboard.words.length} word(s) at position ${insertIndex}`);
       // Move cursor to the last pasted word with cursor after it
       setCursorIndex(insertIndex + clipboard.words.length - 1);
       setCursorPosition('after');
@@ -794,7 +1086,11 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       newIndex = wordCount - 1;
       debug('Nav', `End: "${editedWords[cursorIndex]?.word.text}" → "${editedWords[newIndex]?.word.text}"`);
       handled = true;
-    } else if (e.key === 'Enter' || e.key === ' ') {
+    } else if (e.key === 'Enter') {
+      // Open word editor for current word
+      openWordEditor(cursorIndex);
+      handled = true;
+    } else if (e.key === ' ') {
       // Toggle play/pause from cursor position
       const ew = editedWords[cursorIndex];
       const media = mediaRef.current;
@@ -804,20 +1100,28 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           if (hasEdits) {
             // Build segments and start sequence playback
             const segments = buildPlaybackSegments(editedWords);
+            debug('Segment', `Built ${segments.length} segments, cursor at index ${cursorIndex}`);
             if (segments.length > 0) {
               // Find which segment contains the cursor
               let startSegmentIdx = 0;
+              let foundCursor = false;
               for (let i = 0; i < segments.length; i++) {
                 if (segments[i].editedIndices.includes(cursorIndex)) {
                   startSegmentIdx = i;
+                  foundCursor = true;
                   break;
                 }
+              }
+              if (!foundCursor) {
+                debug('Segment', `Cursor ${cursorIndex} not found in any segment, defaulting to 0`);
               }
               playbackSegments.current = segments;
               currentSegmentIndex.current = startSegmentIdx;
               setIsPlayingSequence(true);
-              debug('Segment', `Starting sequence playback from segment ${startSegmentIdx}`);
-              media.currentTime = segments[startSegmentIdx].startMs / 1000;
+              // Start from the cursor word's time, not the segment's start
+              const startTimeMs = ew.word.startMs;
+              debug('Segment', `Starting sequence playback from segment ${startSegmentIdx} at cursor "${ew.word.text}" (${startTimeMs}ms)`);
+              media.currentTime = startTimeMs / 1000;
               media.play().catch((err) => {
                 if (err.name !== 'AbortError') {
                   console.error('[TranscriptViewer] Play error:', err);
@@ -879,24 +1183,36 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     return index >= selection.start && index <= selection.end;
   };
 
-  const getSelectedText = (): string => {
-    if (!selection) return '';
-    return editedWords
-      .slice(selection.start, selection.end + 1)
-      .filter(ew => !ew.deleted && ew.word.wordType !== 'silence')
-      .map(ew => ew.word.text)
-      .join(' ');
+  // Get the words that are selected (for copy/cut operations)
+  const getSelectedWords = (): EditableWord[] => {
+    if (selection) {
+      return editedWords
+        .slice(selection.start, selection.end + 1)
+        .filter(ew => !ew.deleted);
+    }
+    // If no selection, get the cursor word (if it's not deleted)
+    const cursorWord = editedWords[cursorIndex];
+    if (cursorWord && !cursorWord.deleted) {
+      return [cursorWord];
+    }
+    return [];
   };
 
   // Handle copy
   const handleCopy = useCallback((e: React.ClipboardEvent) => {
-    const selectedText = getSelectedText();
-    if (selectedText) {
+    const selectedWords = getSelectedWords();
+    const selectedText = selectedWords
+      .filter(ew => ew.word.wordType !== 'silence')
+      .map(ew => ew.word.text)
+      .join(' ');
+    if (selectedWords.length > 0) {
       e.preventDefault();
       e.clipboardData.setData('text/plain', selectedText);
-      debug('Edit', `Copied text: "${selectedText.substring(0, 50)}${selectedText.length > 50 ? '...' : ''}"`);
+      // Also set the internal clipboard so paste works
+      setClipboard({ words: selectedWords, operation: 'copy' });
+      debug('Edit', `Copied ${selectedWords.length} word(s): "${selectedText.substring(0, 50)}${selectedText.length > 50 ? '...' : ''}"`);
     }
-  }, [selection, editedWords]);
+  }, [selection, editedWords, cursorIndex]);
 
   // Count active (non-deleted) words (excluding silences for word count)
   const activeWordCount = editedWords.filter(ew => !ew.deleted && ew.word.wordType !== 'silence').length;
@@ -1022,10 +1338,23 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         matchingCounts={getFillerMatchCounts()}
       />
 
+      <WordEditorModal
+        isOpen={editorWordIndex !== null}
+        editableWord={editorWordIndex !== null ? editedWords[editorWordIndex] : null}
+        onClose={() => {
+          setEditorWordIndex(null);
+          // Restore focus to transcript content after modal closes
+          setTimeout(() => contentRef.current?.focus(), 0);
+        }}
+        onSave={handleEditorSave}
+        onSplitSilence={handleSplitSilence}
+        onDelete={handleEditorDelete}
+      />
+
       {hasEdits && (
         <div className="transcript-viewer__edit-bar">
           <span className="transcript-viewer__edit-hint">
-            Double-click or long-press to toggle • Del to delete • ⌘X cut • ⌘V paste • ⌘Z undo{undoStack.length > 0 ? ` (${undoStack.length})` : ''}
+            Enter to edit • Del to delete • ⌘X cut • ⌘V paste • ⌘Z undo{undoStack.length > 0 ? ` (${undoStack.length})` : ''}
           </span>
           <button
             className="transcript-viewer__play-edited-btn"
