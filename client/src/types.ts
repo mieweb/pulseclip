@@ -17,6 +17,8 @@ export interface EditableWord {
   word: TranscriptWord;
   /** Whether this word is marked as deleted */
   deleted: boolean;
+  /** Whether this word was inserted (pasted from clipboard) */
+  inserted?: boolean;
 }
 
 /**

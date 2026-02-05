@@ -104,6 +104,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [isPlayingSequence, setIsPlayingSequence] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const userSetCursor = useRef<number | null>(null);
+  const wordPlaybackStartMs = useRef<number | null>(null);
   const wordPlaybackEndMs = useRef<number | null>(null);
   
   // Segment playback refs
@@ -193,8 +194,13 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
 
       // Stop playback if we've reached the end of single-word playback
       if (wordPlaybackEndMs.current !== null && timeMs >= wordPlaybackEndMs.current) {
-        debug('Playback', `Stopping at word end (${wordPlaybackEndMs.current}ms)`);
+        debug('Playback', `Stopping at word end (${wordPlaybackEndMs.current}ms), reseeking to start`);
         media.pause();
+        // Reseek to start of the word so playhead is at word beginning
+        if (wordPlaybackStartMs.current !== null) {
+          media.currentTime = wordPlaybackStartMs.current / 1000;
+          wordPlaybackStartMs.current = null;
+        }
         wordPlaybackEndMs.current = null;
       }
 
@@ -235,6 +241,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         debug('Seek', `Seeking to ${word.startMs}ms ("${word.text}"), will stop at ${word.endMs}ms`);
         media.pause();
         media.currentTime = word.startMs / 1000;
+        wordPlaybackStartMs.current = word.startMs;
         wordPlaybackEndMs.current = word.endMs;
         media.play().catch((err) => {
           // AbortError is expected when quickly clicking between words
@@ -297,9 +304,9 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       pushUndo();
       setEditedWords(prev => {
         const updated = [...prev];
-        // Insert clipboard words at cursor position
+        // Insert clipboard words at cursor position, marked as inserted
         const insertIndex = cursorIndex + 1;
-        const wordsToInsert = clipboard.words.map(w => ({ ...w, deleted: false }));
+        const wordsToInsert = clipboard.words.map(w => ({ ...w, deleted: false, inserted: true }));
         updated.splice(insertIndex, 0, ...wordsToInsert);
         return updated;
       });
@@ -558,6 +565,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           const isCursor = index === cursorIndex;
           const isSelected = isWordSelected(index);
           const isDeleted = ew.deleted;
+          const isInserted = ew.inserted;
           
           return (
             <span
@@ -568,13 +576,14 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
                 isActive ? ' transcript-viewer__word--active' : ''
               }${isCursor ? ' transcript-viewer__word--cursor' : ''
               }${isSelected ? ' transcript-viewer__word--selected' : ''
-              }${isDeleted ? ' transcript-viewer__word--deleted' : ''}`}
+              }${isDeleted ? ' transcript-viewer__word--deleted' : ''
+              }${isInserted ? ' transcript-viewer__word--inserted' : ''}`}
               onClick={(e) => handleWordClick(ew.word, index, e)}
               role="option"
               aria-selected={isSelected || isCursor}
               title={`${ew.word.startMs}ms - ${ew.word.endMs}ms${
                 ew.word.confidence ? ` (${Math.round(ew.word.confidence * 100)}%)` : ''
-              }${isDeleted ? ' [DELETED]' : ''}`}
+              }${isDeleted ? ' [DELETED]' : ''}${isInserted ? ' [INSERTED]' : ''}`}
             >
               {ew.word.text}{' '}
             </span>

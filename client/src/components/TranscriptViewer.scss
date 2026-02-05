@@ -145,6 +145,15 @@
         background: rgba(244, 67, 54, 0.2);
       }
     }
+
+    &--inserted {
+      color: #4CAF50;
+      background: rgba(76, 175, 80, 0.15);
+      
+      &:hover {
+        background: rgba(76, 175, 80, 0.25);
+      }
+    }
     
     // When both cursor and active
     &--cursor.transcript-viewer__word--active {
