@@ -5,6 +5,7 @@ import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
+import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache } from './cache.js';
 
 // Load environment variables
 dotenv.config();
@@ -61,11 +62,13 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   }
 
   const fileUrl = `http://localhost:${port}/uploads/${req.file.filename}`;
+  const localPath = join(__dirname, '../uploads', req.file.filename);
 
   res.json({
     success: true,
     filename: req.file.filename,
     url: fileUrl,
+    localPath,
     size: req.file.size,
     mimetype: req.file.mimetype,
   });
@@ -74,7 +77,7 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
 // Transcribe with selected provider
 app.post('/api/transcribe', async (req, res) => {
   try {
-    const { mediaUrl, providerId, options } = req.body;
+    const { mediaUrl, providerId, options, skipCache } = req.body;
 
     if (!mediaUrl) {
       return res.status(400).json({ error: 'mediaUrl is required' });
@@ -92,12 +95,41 @@ app.post('/api/transcribe', async (req, res) => {
       });
     }
 
+    // Extract filename from URL and build local path for file upload to provider
+    const filename = mediaUrl.split('/').pop();
+    const localPath = join(__dirname, '../uploads', filename || '');
+
+    // Check cache first (unless skipCache is true)
+    if (!skipCache) {
+      const cachedResult = await getCachedTranscription(localPath, providerId);
+      if (cachedResult) {
+        console.log(`Returning cached transcription for ${filename}`);
+        return res.json({
+          success: true,
+          cached: true,
+          provider: {
+            id: provider.id,
+            displayName: provider.displayName,
+          },
+          transcript: cachedResult.normalized,
+          raw: cachedResult.raw,
+        });
+      }
+    } else {
+      console.log(`Skipping cache for ${filename} (re-transcribe requested)`);
+    }
+
     console.log(`Starting transcription with ${provider.displayName}...`);
-    const result = await provider.transcribe(mediaUrl, options);
+    console.log(`Using local file: ${localPath}`);
+    const result = await provider.transcribe(localPath, options);
     console.log(`Transcription complete. Words: ${result.normalized.words.length}`);
+
+    // Cache the result
+    await cacheTranscription(localPath, providerId, result);
 
     res.json({
       success: true,
+      cached: false,
       provider: {
         id: provider.id,
         displayName: provider.displayName,
@@ -114,7 +146,18 @@ app.post('/api/transcribe', async (req, res) => {
   }
 });
 
+// Cache management endpoints
+app.get('/api/cache/stats', (_req, res) => {
+  const stats = getCacheStats();
+  res.json(stats);
+});
+
+app.delete('/api/cache', (_req, res) => {
+  clearCache();
+  res.json({ success: true, message: 'Cache cleared' });
+});
+
 app.listen(port, () => {
-  console.log(`Server running on http://localhost:${port}`);
   console.log(`Available providers: ${providerRegistry.list().map((p) => p.displayName).join(', ')}`);
+  console.log(`Server running on http://localhost:${port}`);
 });

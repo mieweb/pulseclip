@@ -5,15 +5,28 @@ import { TranscriptViewer } from './components/TranscriptViewer';
 import type { Provider, TranscriptionResult } from './types';
 import './App.scss';
 
+type ViewState = 'upload' | 'ready' | 'transcribing' | 'viewing';
+
 function App() {
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  const [mediaFilename, setMediaFilename] = useState<string>('');
   const [transcribing, setTranscribing] = useState(false);
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
+
+  // Determine current view state
+  const viewState: ViewState = transcribing
+    ? 'transcribing'
+    : transcriptionResult
+    ? 'viewing'
+    : mediaUrl
+    ? 'ready'
+    : 'upload';
 
   // Load available providers on mount
   useEffect(() => {
@@ -33,15 +46,17 @@ function App() {
 
   const handleFileUploaded = (url: string, filename: string) => {
     setMediaUrl(url);
+    setMediaFilename(filename);
     setTranscriptionResult(null);
     setError(null);
-    console.log('File uploaded:', filename);
+    setMenuOpen(false);
   };
 
-  const handleTranscribe = async () => {
+  const handleTranscribe = async (skipCache = false) => {
     if (!mediaUrl || !selectedProvider) return;
 
     setTranscribing(true);
+    setTranscriptionResult(null);
     setError(null);
 
     try {
@@ -53,6 +68,7 @@ function App() {
         body: JSON.stringify({
           mediaUrl,
           providerId: selectedProvider,
+          skipCache,
           options: {
             speakerLabels: false,
           },
@@ -73,93 +89,159 @@ function App() {
     }
   };
 
-  return (
-    <div className="app">
-      <header className="app__header">
-        <h1>🎙️ Voice Transcription POC</h1>
-        <p>Upload audio or video files and get interactive transcripts</p>
-      </header>
+  const handleRetranscribe = () => {
+    handleTranscribe(true);
+  };
 
-      <main className="app__main">
-        <section className="app__upload-section">
-          <FileUpload
-            onFileUploaded={handleFileUploaded}
-            disabled={transcribing}
-          />
+  const handleNewFile = () => {
+    setMediaUrl(null);
+    setMediaFilename('');
+    setTranscriptionResult(null);
+    setError(null);
+    setMenuOpen(false);
+  };
 
-          {mediaUrl && (
-            <div className="app__controls">
-              <div className="app__provider-select">
-                <label htmlFor="provider">Transcription Provider:</label>
-                <select
-                  id="provider"
-                  value={selectedProvider}
-                  onChange={(e) => setSelectedProvider(e.target.value)}
-                  disabled={transcribing || providers.length === 0}
-                >
-                  {providers.map((provider) => (
-                    <option key={provider.id} value={provider.id}>
-                      {provider.displayName}
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              <button
-                className="app__transcribe-btn"
-                onClick={handleTranscribe}
-                disabled={transcribing || !selectedProvider}
-              >
-                {transcribing ? 'Transcribing...' : 'Transcribe'}
-              </button>
-            </div>
-          )}
-
+  // Upload view - centered upload area
+  if (viewState === 'upload') {
+    return (
+      <div className="app app--upload">
+        <div className="app__upload-container">
+          <h1 className="app__title">🎙️ Voice Transcription</h1>
+          <FileUpload onFileUploaded={handleFileUploaded} disabled={false} />
           {error && (
             <div className="app__error">
               <strong>Error:</strong> {error}
             </div>
           )}
-        </section>
+        </div>
+      </div>
+    );
+  }
 
-        {mediaUrl && (
-          <section className="app__media-section">
-            <MediaPlayer mediaUrl={mediaUrl} mediaRef={mediaRef} />
-          </section>
-        )}
+  // Ready/Transcribing/Viewing states - split view
+  return (
+    <div className="app app--split">
+      {/* Compact toolbar */}
+      <header className="app__toolbar">
+        <div className="app__toolbar-left">
+          <button
+            className="app__menu-btn"
+            onClick={() => setMenuOpen(!menuOpen)}
+            aria-label="Menu"
+          >
+            ☰
+          </button>
+          <span className="app__filename" title={mediaFilename}>
+            {mediaFilename}
+          </span>
+        </div>
 
-        {transcriptionResult && (
-          <section className="app__transcript-section">
-            <div className="app__transcript-controls">
-              <button
-                className={`app__view-toggle ${!showRaw ? 'active' : ''}`}
-                onClick={() => setShowRaw(false)}
+        <div className="app__toolbar-right">
+          {viewState === 'ready' && (
+            <>
+              <select
+                className="app__provider-dropdown"
+                value={selectedProvider}
+                onChange={(e) => setSelectedProvider(e.target.value)}
+                disabled={providers.length === 0}
+                aria-label="Transcription Provider"
               >
-                Transcript View
-              </button>
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.displayName}
+                  </option>
+                ))}
+              </select>
               <button
-                className={`app__view-toggle ${showRaw ? 'active' : ''}`}
-                onClick={() => setShowRaw(true)}
+                className="app__transcribe-btn"
+                onClick={() => handleTranscribe(false)}
+                disabled={!selectedProvider}
               >
-                Raw JSON
+                Transcribe
               </button>
+            </>
+          )}
+
+          {viewState === 'transcribing' && (
+            <span className="app__status">Transcribing...</span>
+          )}
+        </div>
+      </header>
+
+      {/* Dropdown menu */}
+      {menuOpen && (
+        <div className="app__menu">
+          <button className="app__menu-item" onClick={handleNewFile}>
+            📁 New File
+          </button>
+        </div>
+      )}
+
+      {/* Error banner */}
+      {error && (
+        <div className="app__error-banner">
+          <strong>Error:</strong> {error}
+          <button onClick={() => setError(null)}>✕</button>
+        </div>
+      )}
+
+      {/* Split content area */}
+      <main className="app__content">
+        <div className="app__media-pane">
+          {mediaUrl && <MediaPlayer mediaUrl={mediaUrl} mediaRef={mediaRef} />}
+        </div>
+
+        <div className="app__transcript-pane">
+          {viewState === 'ready' && (
+            <div className="app__ready-message">
+              <p>Ready to transcribe</p>
+              <p className="app__ready-hint">
+                Click "Transcribe" to start processing your media file
+              </p>
             </div>
+          )}
 
-            <TranscriptViewer
-              transcript={transcriptionResult.transcript}
-              mediaRef={mediaRef}
-              showRaw={showRaw}
-              rawData={transcriptionResult.raw}
-            />
-          </section>
-        )}
+          {viewState === 'transcribing' && (
+            <div className="app__loading">
+              <div className="app__spinner" />
+              <p>Processing with {providers.find(p => p.id === selectedProvider)?.displayName}...</p>
+            </div>
+          )}
+
+          {viewState === 'viewing' && transcriptionResult && (
+            <>
+              <div className="app__transcript-toolbar">
+                <div className="app__view-toggles">
+                  <button
+                    className={`app__toggle ${!showRaw ? 'app__toggle--active' : ''}`}
+                    onClick={() => setShowRaw(false)}
+                  >
+                    Transcript
+                  </button>
+                  <button
+                    className={`app__toggle ${showRaw ? 'app__toggle--active' : ''}`}
+                    onClick={() => setShowRaw(true)}
+                  >
+                    JSON
+                  </button>
+                </div>
+                <button
+                  className="app__retranscribe-btn"
+                  onClick={handleRetranscribe}
+                >
+                  🔄 Re-transcribe
+                </button>
+              </div>
+              <TranscriptViewer
+                transcript={transcriptionResult.transcript}
+                mediaRef={mediaRef}
+                showRaw={showRaw}
+                rawData={transcriptionResult.raw}
+              />
+            </>
+          )}
+        </div>
       </main>
-
-      <footer className="app__footer">
-        <p>
-          POC demonstrating provider-agnostic transcription with word-level timestamps
-        </p>
-      </footer>
     </div>
   );
 }

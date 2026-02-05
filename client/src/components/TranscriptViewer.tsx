@@ -80,7 +80,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               word.confidence ? ` (${Math.round(word.confidence * 100)}%)` : ''
             }`}
           >
-            {word.text}
+            {word.text}{' '}
           </span>
         ))}
       </div>

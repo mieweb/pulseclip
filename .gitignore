@@ -140,5 +140,6 @@ vite.config.ts.timestamp-*
 
 # Project specific
 server/uploads/
+server/cache/
 server/dist/
 client/dist/
