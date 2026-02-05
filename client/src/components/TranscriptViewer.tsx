@@ -86,8 +86,14 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [editedWords, setEditedWords] = useState<EditableWord[]>(() => 
     initEditableWords(transcript)
   );
+  const [undoStack, setUndoStack] = useState<EditableWord[][]>([]);
   const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
   const [hasEdits, setHasEdits] = useState(false);
+  
+  // Helper to save current state to undo stack before making changes
+  const pushUndo = useCallback(() => {
+    setUndoStack(prev => [...prev, editedWords]);
+  }, [editedWords]);
   
   // Playback state
   const [activeWordIndex, setActiveWordIndex] = useState<number | null>(null);
@@ -107,6 +113,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   // Reset edited words when transcript changes
   useEffect(() => {
     setEditedWords(initEditableWords(transcript));
+    setUndoStack([]);
     setHasEdits(false);
     setCursorIndex(0);
     setSelection(null);
@@ -248,6 +255,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
 
     // Delete/Backspace - toggle deleted state for selection or cursor word
     if (e.key === 'Delete' || e.key === 'Backspace') {
+      pushUndo();
       setEditedWords(prev => {
         const updated = [...prev];
         if (selection) {
@@ -268,6 +276,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     // Cut - Cmd/Ctrl+X
     else if ((e.metaKey || e.ctrlKey) && e.key === 'x') {
       if (selection) {
+        pushUndo();
         const cutWords = editedWords.slice(selection.start, selection.end + 1);
         setClipboard({ words: cutWords, operation: 'cut' });
         setEditedWords(prev => {
@@ -285,6 +294,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     }
     // Paste - Cmd/Ctrl+V
     else if ((e.metaKey || e.ctrlKey) && e.key === 'v' && clipboard) {
+      pushUndo();
       setEditedWords(prev => {
         const updated = [...prev];
         // Insert clipboard words at cursor position
@@ -301,14 +311,19 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       setSelectionAnchor(null);
       handled = true;
     }
-    // Undo all edits - Cmd/Ctrl+Z (simple reset for now)
+    // Undo last edit - Cmd/Ctrl+Z
     else if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-      setEditedWords(initEditableWords(transcript));
-      setHasEdits(false);
-      setCursorIndex(0);
-      setSelection(null);
-      setSelectionAnchor(null);
-      debug('Edit', 'Reset all edits');
+      if (undoStack.length > 0) {
+        const previousState = undoStack[undoStack.length - 1];
+        setUndoStack(prev => prev.slice(0, -1));
+        setEditedWords(previousState);
+        // Check if we're back to original state
+        const isOriginal = previousState.every((ew, i) => 
+          ew.originalIndex === i && !ew.deleted
+        ) && previousState.length === transcript.words.length;
+        setHasEdits(!isOriginal);
+        debug('Edit', `Undo (${undoStack.length - 1} remaining)`);
+      }
       handled = true;
     }
     else if (e.key === 'ArrowLeft') {
@@ -446,7 +461,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       const wordElement = contentRef.current?.querySelector(`[data-word-index="${newIndex}"]`);
       wordElement?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
-  }, [cursorIndex, selectionAnchor, editedWords, mediaRef, hasEdits, clipboard, selection, transcript]);
+  }, [cursorIndex, selectionAnchor, editedWords, mediaRef, hasEdits, clipboard, selection, transcript, pushUndo, undoStack]);
 
   const isWordSelected = (index: number): boolean => {
     if (!selection) return false;
@@ -507,7 +522,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       {hasEdits && (
         <div className="transcript-viewer__edit-bar">
           <span className="transcript-viewer__edit-hint">
-            Press Del to toggle delete • ⌘X to cut • ⌘V to paste • ⌘Z to reset
+            Del to toggle delete • ⌘X cut • ⌘V paste • ⌘Z undo{undoStack.length > 0 ? ` (${undoStack.length})` : ''}
           </span>
           <button
             className="transcript-viewer__play-edited-btn"
