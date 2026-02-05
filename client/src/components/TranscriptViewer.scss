@@ -86,6 +86,12 @@
     }
   }
 
+  &__silence-count {
+    background: rgba(128, 128, 128, 0.2) !important;
+    color: #999 !important;
+    font-style: italic;
+  }
+
   &__deleted-count {
     background: rgba(244, 67, 54, 0.2) !important;
     color: #f44336 !important;
@@ -208,6 +214,31 @@
       
       &:hover {
         background: rgba(76, 175, 80, 0.25);
+      }
+    }
+
+    &--silence {
+      font-size: 11px;
+      font-style: italic;
+      font-weight: 500;
+      color: #888;
+      background: rgba(128, 128, 128, 0.15);
+      border: 1px dashed rgba(128, 128, 128, 0.4);
+      letter-spacing: 0.3px;
+      
+      &:hover {
+        color: #aaa;
+        background: rgba(128, 128, 128, 0.25);
+        border-color: rgba(128, 128, 128, 0.6);
+      }
+
+      // Silence + deleted combo
+      &.transcript-viewer__word--deleted {
+        opacity: 0.3;
+        border-style: dotted;
+        color: #f44336;
+        background: rgba(244, 67, 54, 0.08);
+        border-color: rgba(244, 67, 54, 0.3);
       }
     }
   }

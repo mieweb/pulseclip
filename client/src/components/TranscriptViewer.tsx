@@ -293,9 +293,59 @@ function buildPlaybackSegments(editedWords: EditableWord[]): PlaybackSegment[] {
   return segments;
 }
 
-/** Initialize editable words from transcript */
+/** Minimum silence duration in milliseconds to detect and insert */
+const MIN_SILENCE_MS = 100;
+
+/**
+ * Detect silences between words and return a new array with silence pseudo-words inserted.
+ * Silences are detected as gaps between the endMs of one word and startMs of the next.
+ */
+function insertSilences(words: TranscriptWord[]): TranscriptWord[] {
+  if (words.length === 0) return [];
+  
+  const result: TranscriptWord[] = [];
+  
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    
+    // Check for silence before the first word (from 0ms)
+    if (i === 0 && word.startMs > MIN_SILENCE_MS) {
+      result.push({
+        text: `[${(word.startMs / 1000).toFixed(1)}s]`,
+        startMs: 0,
+        endMs: word.startMs,
+        wordType: 'silence',
+      });
+    }
+    
+    // Add the word (with default wordType)
+    result.push({ ...word, wordType: word.wordType ?? 'word' });
+    
+    // Check for silence after this word (gap before next word)
+    if (i < words.length - 1) {
+      const nextWord = words[i + 1];
+      const gapMs = nextWord.startMs - word.endMs;
+      
+      if (gapMs >= MIN_SILENCE_MS) {
+        result.push({
+          text: `[${(gapMs / 1000).toFixed(1)}s]`,
+          startMs: word.endMs,
+          endMs: nextWord.startMs,
+          wordType: 'silence',
+        });
+      }
+    }
+  }
+  
+  return result;
+}
+
+/** Initialize editable words from transcript, inserting detected silences */
 function initEditableWords(transcript: Transcript): EditableWord[] {
-  return transcript.words.map((word, index) => ({
+  // First insert silences between the original words
+  const wordsWithSilences = insertSilences(transcript.words);
+  
+  return wordsWithSilences.map((word, index) => ({
     originalIndex: index,
     word,
     deleted: false,
@@ -833,7 +883,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     if (!selection) return '';
     return editedWords
       .slice(selection.start, selection.end + 1)
-      .filter(ew => !ew.deleted)
+      .filter(ew => !ew.deleted && ew.word.wordType !== 'silence')
       .map(ew => ew.word.text)
       .join(' ');
   };
@@ -848,15 +898,17 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     }
   }, [selection, editedWords]);
 
-  // Count active (non-deleted) words
-  const activeWordCount = editedWords.filter(ew => !ew.deleted).length;
-  const deletedWordCount = editedWords.length - activeWordCount;
+  // Count active (non-deleted) words (excluding silences for word count)
+  const activeWordCount = editedWords.filter(ew => !ew.deleted && ew.word.wordType !== 'silence').length;
+  const activeSilenceCount = editedWords.filter(ew => !ew.deleted && ew.word.wordType === 'silence').length;
+  const deletedWordCount = editedWords.filter(ew => ew.deleted && ew.word.wordType !== 'silence').length;
+  const deletedSilenceCount = editedWords.filter(ew => ew.deleted && ew.word.wordType === 'silence').length;
 
-  // Calculate filler word matches for modal
+  // Calculate filler word matches for modal (exclude silences)
   const getFillerMatchCounts = useCallback((): Map<string, number> => {
     const counts = new Map<string, number>();
     for (const ew of editedWords) {
-      if (ew.deleted) continue;
+      if (ew.deleted || ew.word.wordType === 'silence') continue;
       const wordText = ew.word.text.toLowerCase().replace(/[.,!?;:]/g, '');
       for (const filler of DEFAULT_FILLER_WORDS) {
         if (wordText === filler) {
@@ -869,11 +921,11 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     return counts;
   }, [editedWords]);
 
-  // Handle removing filler words
+  // Handle removing filler words (exclude silences from matching)
   const handleRemoveFillers = useCallback((fillerWords: string[]) => {
     const fillerSet = new Set(fillerWords.map(f => f.toLowerCase()));
     const newEditedWords = editedWords.map(ew => {
-      if (ew.deleted) return ew;
+      if (ew.deleted || ew.word.wordType === 'silence') return ew;
       const wordText = ew.word.text.toLowerCase().replace(/[.,!?;:]/g, '');
       if (fillerSet.has(wordText)) {
         return { ...ew, deleted: true };
@@ -945,9 +997,14 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           </button>
           <div className="transcript-viewer__meta">
             <span>{activeWordCount} words</span>
-            {deletedWordCount > 0 && (
+            {activeSilenceCount > 0 && (
+              <span className="transcript-viewer__silence-count">
+                {activeSilenceCount} silences
+              </span>
+            )}
+            {(deletedWordCount > 0 || deletedSilenceCount > 0) && (
               <span className="transcript-viewer__deleted-count">
-                {deletedWordCount} deleted
+                {deletedWordCount + deletedSilenceCount} deleted
               </span>
             )}
             {transcript.speakers && (
@@ -1009,6 +1066,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           const isSelected = isWordSelected(index);
           const isDeleted = ew.deleted;
           const isInserted = ew.inserted;
+          const isSilence = ew.word.wordType === 'silence';
           const showCursorBefore = isCursor && cursorPosition === 'before';
           const showCursorAfter = isCursor && cursorPosition === 'after' && index === editedWords.length - 1;
           
@@ -1023,6 +1081,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               }${isSelected ? ' transcript-viewer__word--selected' : ''
               }${isDeleted ? ' transcript-viewer__word--deleted' : ''
               }${isInserted ? ' transcript-viewer__word--inserted' : ''
+              }${isSilence ? ' transcript-viewer__word--silence' : ''
               }${showCursorBefore ? ' transcript-viewer__word--cursor-before' : ''
               }${showCursorAfter ? ' transcript-viewer__word--cursor-after' : ''}`}
               onClick={(e) => handleWordClick(ew.word, index, e)}
@@ -1033,7 +1092,10 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               aria-selected={isSelected || isCursor}
               title={`${ew.word.startMs}ms - ${ew.word.endMs}ms${
                 ew.word.confidence ? ` (${Math.round(ew.word.confidence * 100)}%)` : ''
-              }${isDeleted ? ' [DELETED - double-click to restore]' : ''}${isInserted ? ' [INSERTED]' : ''}${!isDeleted && !isInserted ? ' (double-click to delete)' : ''}`}
+              }${isSilence ? ` [SILENCE: ${((ew.word.endMs - ew.word.startMs) / 1000).toFixed(1)}s]` : ''
+              }${isDeleted ? ' [DELETED - double-click to restore]' : ''
+              }${isInserted ? ' [INSERTED]' : ''
+              }${!isDeleted && !isInserted && !isSilence ? ' (double-click to delete)' : ''}`}
             >
               {ew.word.text}{' '}
             </span>

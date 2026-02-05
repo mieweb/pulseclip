@@ -1,9 +1,14 @@
+/** Type of transcript word - 'word' for spoken content, 'silence' for detected gaps */
+export type WordType = 'word' | 'silence';
+
 export interface TranscriptWord {
   text: string;
   startMs: number;
   endMs: number;
   speakerId?: string;
   confidence?: number;
+  /** Type of word: 'word' for spoken content, 'silence' for detected gaps. Defaults to 'word' */
+  wordType?: WordType;
 }
 
 /**
