@@ -5,9 +5,11 @@ import './FileUpload.scss';
 interface FileUploadProps {
   onFileUploaded: (fileUrl: string, filename: string) => void;
   disabled?: boolean;
+  apiKey?: string;
+  onAuthError?: () => void;
 }
 
-export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled }) => {
+export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiKey, onAuthError }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,10 +33,21 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled }) =>
       const formData = new FormData();
       formData.append('file', file);
 
+      const headers: HeadersInit = {};
+      if (apiKey) {
+        headers['X-API-Key'] = apiKey;
+      }
+
       const response = await fetch('/api/upload', {
         method: 'POST',
+        headers,
         body: formData,
       });
+
+      if (response.status === 401) {
+        onAuthError?.();
+        throw new Error('API key required');
+      }
 
       if (!response.ok) {
         throw new Error('Upload failed');

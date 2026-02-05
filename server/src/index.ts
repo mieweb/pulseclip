@@ -15,10 +15,27 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-const port = process.env.PORT || 3001;
+const port = process.env.PORT || 3000;
 
 // Initialize provider registry
 const providerRegistry = initializeProviders();
+
+// Secret key for protected endpoints
+const secretKey = process.env.SECRET_KEY;
+
+// Auth middleware for protected endpoints
+const requireAuth: express.RequestHandler = (req, res, next) => {
+  if (!secretKey) {
+    // No secret key configured, allow all requests
+    return next();
+  }
+
+  const providedKey = req.headers['x-api-key'] as string;
+  if (!providedKey || providedKey !== secretKey) {
+    return res.status(401).json({ error: 'Unauthorized', message: 'Valid API key required' });
+  }
+  next();
+};
 
 // Configure multer for file uploads
 const storage = multer.diskStorage({
@@ -62,13 +79,13 @@ app.get('/api/providers', (_req, res) => {
   res.json({ providers });
 });
 
-// Upload file
-app.post('/api/upload', upload.single('file'), (req, res) => {
+// Upload file (protected)
+app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
-  const fileUrl = `http://localhost:${port}/uploads/${req.file.filename}`;
+  const fileUrl = `/uploads/${req.file.filename}`;
   const localPath = join(__dirname, '../uploads', req.file.filename);
 
   res.json({
@@ -81,7 +98,7 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   });
 });
 
-// Transcribe with selected provider
+// Transcribe with selected provider (auth required only for non-cached requests)
 app.post('/api/transcribe', async (req, res) => {
   try {
     const { mediaUrl, providerId, options, skipCache } = req.body;
@@ -106,7 +123,7 @@ app.post('/api/transcribe', async (req, res) => {
     const filename = mediaUrl.split('/').pop();
     const localPath = join(__dirname, '../uploads', filename || '');
 
-    // Check cache first (unless skipCache is true)
+    // Check cache first (unless skipCache is true) - no auth required for cached results
     if (!skipCache) {
       const cachedResult = await getCachedTranscription(localPath, providerId);
       if (cachedResult) {
@@ -124,6 +141,14 @@ app.post('/api/transcribe', async (req, res) => {
       }
     } else {
       console.log(`Skipping cache for ${filename} (re-transcribe requested)`);
+    }
+
+    // Auth required for actual transcription (uses paid API)
+    if (secretKey) {
+      const providedKey = req.headers['x-api-key'] as string;
+      if (!providedKey || providedKey !== secretKey) {
+        return res.status(401).json({ error: 'Unauthorized', message: 'Valid API key required for transcription' });
+      }
     }
 
     console.log(`Starting transcription with ${provider.displayName}...`);
@@ -164,7 +189,7 @@ app.get('/api/file/:filename', (req, res) => {
   }
   
   const stats = statSync(localPath);
-  const fileUrl = `http://localhost:${port}/uploads/${filename}`;
+  const fileUrl = `/uploads/${filename}`;
   
   res.json({
     success: true,

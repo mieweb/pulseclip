@@ -25,6 +25,9 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [debugMode, setDebugMode] = useState(isDebugEnabled());
+  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('pulseclip_api_key') || '');
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [pendingApiKey, setPendingApiKey] = useState('');
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
   const hasAutoTranscribed = useRef(false);
 
@@ -125,11 +128,16 @@ function App() {
     setError(null);
 
     try {
+      const headers: HeadersInit = {
+        'Content-Type': 'application/json',
+      };
+      if (apiKey) {
+        headers['X-API-Key'] = apiKey;
+      }
+
       const response = await fetch('/api/transcribe', {
         method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-        },
+        headers,
         body: JSON.stringify({
           mediaUrl,
           providerId: selectedProvider,
@@ -139,6 +147,11 @@ function App() {
           },
         }),
       });
+
+      if (response.status === 401) {
+        setShowApiKeyModal(true);
+        throw new Error('API key required');
+      }
 
       if (!response.ok) {
         const errorData = await response.json();
@@ -182,12 +195,56 @@ function App() {
     }
   }, [mediaUrl, selectedProvider, transcribing, transcriptionResult, loading]);
 
+  const handleAuthError = () => {
+    setShowApiKeyModal(true);
+  };
+
+  const handleApiKeySubmit = () => {
+    const key = pendingApiKey.trim();
+    if (key) {
+      setApiKey(key);
+      localStorage.setItem('pulseclip_api_key', key);
+    }
+    setShowApiKeyModal(false);
+    setPendingApiKey('');
+  };
+
+  // Render API Key Modal
+  const renderApiKeyModal = () => {
+    if (!showApiKeyModal) return null;
+    return (
+      <div className="api-key-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="api-key-modal-title">
+        <div className="api-key-modal">
+          <h3 id="api-key-modal-title">API Key Required</h3>
+          <p>Enter your API key to upload files and use transcription.</p>
+          <input
+            type="password"
+            value={pendingApiKey}
+            onChange={(e) => setPendingApiKey(e.target.value)}
+            placeholder="Enter API key"
+            className="api-key-modal__input"
+            onKeyDown={(e) => e.key === 'Enter' && handleApiKeySubmit()}
+            autoFocus
+          />
+          <div className="api-key-modal__actions">
+            <button onClick={() => setShowApiKeyModal(false)} className="api-key-modal__cancel">
+              Cancel
+            </button>
+            <button onClick={handleApiKeySubmit} className="api-key-modal__submit">
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Loading view - when restoring file from URL
   if (viewState === 'loading') {
     return (
       <div className="app app--upload">
         <div className="app__upload-container">
-          <h1 className="app__title">🎙️ Voice Transcription</h1>
+          <h1 className="app__title">🎙️ PulseClip</h1>
           <div className="app__loading">
             <div className="app__spinner" />
             <p>Loading file...</p>
@@ -201,9 +258,10 @@ function App() {
   if (viewState === 'upload') {
     return (
       <div className="app app--upload">
+        {renderApiKeyModal()}
         <div className="app__upload-container">
-          <h1 className="app__title">🎙️ Voice Transcription</h1>
-          <FileUpload onFileUploaded={handleFileUploaded} disabled={false} />
+          <h1 className="app__title">🎙️ PulseClip</h1>
+          <FileUpload onFileUploaded={handleFileUploaded} disabled={false} apiKey={apiKey} onAuthError={handleAuthError} />
           {error && (
             <div className="app__error">
               <strong>Error:</strong> {error}
@@ -217,6 +275,7 @@ function App() {
   // Ready/Transcribing/Viewing states - split view
   return (
     <div className="app app--split">
+      {renderApiKeyModal()}
       {/* Compact toolbar */}
       <header className="app__toolbar">
         <div className="app__toolbar-left">
