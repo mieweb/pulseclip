@@ -108,6 +108,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [selection, setSelection] = useState<SelectionRange | null>(null);
   const [isSeeking, setIsSeeking] = useState(false);
   const [isPlayingSequence, setIsPlayingSequence] = useState(false);
+  const [isFocused, setIsFocused] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const userSetCursor = useRef<number | null>(null);
   const wordPlaybackStartMs = useRef<number | null>(null);
@@ -347,16 +348,20 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       if (cursorPosition === 'after') {
         // Move from 'after' last word back to 'before' last word
         setCursorPosition('before');
+        debug('Nav', `ArrowLeft: cursor position 'after' → 'before' (word ${cursorIndex})`);
       } else {
         newIndex = Math.max(0, cursorIndex - 1);
+        debug('Nav', `ArrowLeft: ${cursorIndex} → ${newIndex}`);
       }
       handled = true;
     } else if (e.key === 'ArrowRight') {
       if (cursorIndex === wordCount - 1 && cursorPosition === 'before') {
         // At last word with cursor before it - move cursor to after
         setCursorPosition('after');
+        debug('Nav', `ArrowRight: cursor position 'before' → 'after' (word ${cursorIndex})`);
       } else if (cursorPosition !== 'after') {
         newIndex = Math.min(wordCount - 1, cursorIndex + 1);
+        debug('Nav', `ArrowRight: ${cursorIndex} → ${newIndex}`);
       }
       handled = true;
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -405,13 +410,16 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         }
         
         newIndex = bestMatch;
+        debug('Nav', `${e.key}: ${cursorIndex} → ${newIndex}`);
       }
       handled = true;
     } else if (e.key === 'Home') {
       newIndex = 0;
+      debug('Nav', `Home: ${cursorIndex} → ${newIndex}`);
       handled = true;
     } else if (e.key === 'End') {
       newIndex = wordCount - 1;
+      debug('Nav', `End: ${cursorIndex} → ${newIndex}`);
       handled = true;
     } else if (e.key === 'Enter' || e.key === ' ') {
       // Toggle play/pause from cursor position
@@ -513,6 +521,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     if (selectedText) {
       e.preventDefault();
       e.clipboardData.setData('text/plain', selectedText);
+      debug('Edit', `Copied text: "${selectedText.substring(0, 50)}${selectedText.length > 50 ? '...' : ''}"`);
     }
   }, [selection, editedWords]);
 
@@ -601,11 +610,13 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       )}
 
       <div 
-        className="transcript-viewer__content"
+        className={`transcript-viewer__content${isFocused ? ' transcript-viewer__content--focused' : ''}`}
         ref={contentRef}
         tabIndex={0}
         onKeyDown={handleKeyDown}
         onCopy={handleCopy}
+        onFocus={() => setIsFocused(true)}
+        onBlur={() => setIsFocused(false)}
         role="listbox"
         aria-label="Transcript words"
         aria-activedescendant={`word-${cursorIndex}`}

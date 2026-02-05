@@ -140,6 +140,9 @@
     
     &:focus {
       outline: none;
+    }
+
+    &--focused {
       background: rgba(255, 255, 255, 0.02);
     }
   }
@@ -153,16 +156,6 @@
     
     &:hover {
       background: rgba(33, 150, 243, 0.3);
-      color: white;
-    }
-    
-    &--cursor {
-      outline: 2px solid #2196F3;
-      outline-offset: 1px;
-    }
-    
-    &--selected {
-      background: rgba(33, 150, 243, 0.4);
       color: white;
     }
     
@@ -192,24 +185,33 @@
         background: rgba(76, 175, 80, 0.25);
       }
     }
+  }
 
-    // Visual cursor indicator (blinking line)
-    &--cursor-before::before,
-    &--cursor-after::after {
-      content: '';
-      position: absolute;
-      top: 2px;
-      bottom: 2px;
-      width: 2px;
-      background: #2196F3;
-      animation: cursor-blink 1s step-end infinite;
+  // Cursor and selection styles only when content is focused
+  &__content--focused &__word {
+    &--cursor {
+      outline: 2px solid #2196F3;
+      outline-offset: 1px;
+    }
+    
+    &--selected {
+      background: rgba(33, 150, 243, 0.4);
+      color: white;
     }
 
+    // Visual cursor indicator (blinking line)
     &--cursor-before {
       position: relative;
       
       &::before {
+        content: '';
+        position: absolute;
+        top: 2px;
+        bottom: 2px;
+        width: 2px;
         left: -2px;
+        background: #2196F3;
+        animation: cursor-blink 1s step-end infinite;
       }
     }
 
@@ -217,13 +219,15 @@
       position: relative;
       
       &::after {
+        content: '';
+        position: absolute;
+        top: 2px;
+        bottom: 2px;
+        width: 2px;
         right: 2px; // Account for the trailing space
+        background: #2196F3;
+        animation: cursor-blink 1s step-end infinite;
       }
-    }
-
-    @keyframes cursor-blink {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0; }
     }
     
     // When both cursor and active
@@ -235,6 +239,11 @@
     &--cursor.transcript-viewer__word--deleted {
       outline-color: #f44336;
     }
+  }
+
+  @keyframes cursor-blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0; }
   }
   
   &__raw {
