@@ -696,6 +696,24 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
             currentSegmentIndex.current = 0;
           }
         }
+      } else if (hasEdits && !media.paused) {
+        // During normal playback with edits, skip over deleted words
+        // Check if we're currently in a deleted word's time range
+        const inDeletedWord = editedWords.some(
+          (ew) => ew.deleted && timeMs >= ew.word.startMs && timeMs < ew.word.endMs
+        );
+        
+        if (inDeletedWord) {
+          // Find the next non-deleted word after current time
+          const nextNonDeleted = editedWords.find(
+            (ew) => !ew.deleted && ew.word.startMs >= timeMs
+          );
+          
+          if (nextNonDeleted) {
+            debug('Skip', `Skipping deleted content, jumping to "${nextNonDeleted.word.text}" at ${nextNonDeleted.word.startMs}ms`);
+            media.currentTime = nextNonDeleted.word.startMs / 1000;
+          }
+        }
       }
 
       // Stop playback if we've reached the end of single-word playback
@@ -745,7 +763,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
 
     media.addEventListener('timeupdate', handleTimeUpdate);
     return () => media.removeEventListener('timeupdate', handleTimeUpdate);
-  }, [editedWords, mediaRef, isPlayingSequence]);
+  }, [editedWords, mediaRef, isPlayingSequence, hasEdits]);
 
   const handleWordClick = (word: TranscriptWord, index: number, e: React.MouseEvent) => {
     debug('Click', `Word: "${word.text}" (index: ${index}, start: ${word.startMs}ms)`);

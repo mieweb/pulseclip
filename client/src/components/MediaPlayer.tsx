@@ -51,6 +51,7 @@ export const MediaPlayer: FC<MediaPlayerProps> = ({ mediaUrl, mediaRef }) => {
             ref={mediaRef as RefObject<HTMLVideoElement>}
             src={mediaUrl}
             controls
+            playsInline
             className="media-player__video"
             onError={handleError}
             onCanPlay={handleCanPlay}
