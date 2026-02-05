@@ -26,9 +26,13 @@ export class AssemblyAIProvider implements TranscriptionProvider {
     options?: TranscriptionOptions
   ): Promise<ProviderResult> {
     // Submit transcription request
+    // Enable disfluencies (filler words like "um", "uh") for raw transcription
+    // Disable format_text to prevent cleanup and get precise output
     const transcript = await this.client.transcripts.transcribe({
       audio: mediaUrl,
       speaker_labels: options?.speakerLabels ?? false,
+      disfluencies: true,      // Include filler words (um, uh, etc.)
+      format_text: false,      // No text cleanup - raw precise output
     });
 
     if (transcript.status === 'error') {
