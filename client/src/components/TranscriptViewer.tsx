@@ -26,6 +26,7 @@ interface ClipboardData {
 /**
  * Builds playback segments from the edited word list.
  * Consecutive words in original order are merged into single segments.
+ * Inserted (pasted) words each get their own segment since they may be duplicates.
  */
 function buildPlaybackSegments(editedWords: EditableWord[]): PlaybackSegment[] {
   const activeWords = editedWords.filter(w => !w.deleted);
@@ -34,13 +35,15 @@ function buildPlaybackSegments(editedWords: EditableWord[]): PlaybackSegment[] {
   const segments: PlaybackSegment[] = [];
   let currentSegment: PlaybackSegment | null = null;
   let lastOriginalIndex = -2; // Use -2 so first word always starts new segment
+  let lastWasInserted = false;
 
   for (let i = 0; i < editedWords.length; i++) {
     const ew = editedWords[i];
     if (ew.deleted) continue;
 
     // Check if this word is consecutive to the previous in the original
-    const isConsecutive = ew.originalIndex === lastOriginalIndex + 1;
+    // Inserted words always start a new segment (they might be duplicates)
+    const isConsecutive = !ew.inserted && !lastWasInserted && ew.originalIndex === lastOriginalIndex + 1;
 
     if (currentSegment && isConsecutive) {
       // Extend current segment
@@ -59,6 +62,7 @@ function buildPlaybackSegments(editedWords: EditableWord[]): PlaybackSegment[] {
     }
 
     lastOriginalIndex = ew.originalIndex;
+    lastWasInserted = ew.inserted ?? false;
   }
 
   if (currentSegment) {
@@ -111,6 +115,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [isFocused, setIsFocused] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const userSetCursor = useRef<number | null>(null);
+  const isDragging = useRef<boolean>(false);
   const wordPlaybackStartMs = useRef<number | null>(null);
   const wordPlaybackEndMs = useRef<number | null>(null);
   
@@ -213,10 +218,32 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         wordPlaybackEndMs.current = null;
       }
 
-      // Find active word in edited list (based on current playback time)
-      const editedIndex = editedWords.findIndex(
-        (ew) => !ew.deleted && timeMs >= ew.word.startMs && timeMs < ew.word.endMs
-      );
+      // Find active word in edited list
+      // During segment playback, use the current segment's indices to find the right word
+      // (important for duplicate/pasted words with same timing)
+      let editedIndex = -1;
+      
+      if (isPlayingSequence && playbackSegments.current.length > 0) {
+        const currentSeg = playbackSegments.current[currentSegmentIndex.current];
+        if (currentSeg) {
+          // Find which word in the current segment matches the time
+          for (const idx of currentSeg.editedIndices) {
+            const ew = editedWords[idx];
+            if (ew && !ew.deleted && timeMs >= ew.word.startMs && timeMs < ew.word.endMs) {
+              editedIndex = idx;
+              break;
+            }
+          }
+        }
+      }
+      
+      // Fallback: time-based lookup for non-segment playback
+      if (editedIndex === -1) {
+        editedIndex = editedWords.findIndex(
+          (ew) => !ew.deleted && timeMs >= ew.word.startMs && timeMs < ew.word.endMs
+        );
+      }
+      
       if (editedIndex !== activeWordIndex) {
         const ew = editedIndex >= 0 ? editedWords[editedIndex] : null;
         debug('Playback', `Active word: ${ew?.word.text ?? 'none'} (index: ${editedIndex}, time: ${timeMs.toFixed(0)}ms)`);
@@ -240,7 +267,8 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         start: Math.min(selectionAnchor, index),
         end: Math.max(selectionAnchor, index),
       });
-    } else {
+    } else if (!isDragging.current) {
+      // Only clear selection and play if not dragging
       // Clear selection and set new anchor
       setSelectionAnchor(index);
       setSelection(null);
@@ -259,6 +287,38 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
             console.error('[TranscriptViewer] Play error:', err);
           }
         });
+      }
+    }
+  };
+
+  const handleWordMouseDown = (index: number, e: React.MouseEvent) => {
+    // Only handle left mouse button
+    if (e.button !== 0) return;
+    
+    isDragging.current = true;
+    setSelectionAnchor(index);
+    setCursorIndex(index);
+    setCursorPosition('before');
+    setSelection(null);
+    debug('Drag', `Started at "${editedWords[index]?.word.text}"`);
+  };
+
+  const handleWordMouseEnter = (index: number) => {
+    if (!isDragging.current || selectionAnchor === null) return;
+    
+    // Update selection as mouse drags over words
+    setSelection({
+      start: Math.min(selectionAnchor, index),
+      end: Math.max(selectionAnchor, index),
+    });
+    setCursorIndex(index);
+  };
+
+  const handleMouseUp = () => {
+    if (isDragging.current) {
+      isDragging.current = false;
+      if (selection) {
+        debug('Drag', `Selected words ${selection.start}-${selection.end}`);
       }
     }
   };
@@ -292,22 +352,22 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     }
     // Cut - Cmd/Ctrl+X
     else if ((e.metaKey || e.ctrlKey) && e.key === 'x') {
-      if (selection) {
-        pushUndo();
-        const cutWords = editedWords.slice(selection.start, selection.end + 1);
-        setClipboard({ words: cutWords, operation: 'cut' });
-        setEditedWords(prev => {
-          const updated = [...prev];
-          // Mark cut words as deleted
-          for (let i = selection.start; i <= selection.end; i++) {
-            updated[i] = { ...updated[i], deleted: true };
-          }
-          return updated;
-        });
-        setHasEdits(true);
-        debug('Edit', `Cut ${cutWords.length} words`);
-        handled = true;
-      }
+      pushUndo();
+      const startIdx = selection ? selection.start : cursorIndex;
+      const endIdx = selection ? selection.end : cursorIndex;
+      const cutWords = editedWords.slice(startIdx, endIdx + 1);
+      setClipboard({ words: cutWords, operation: 'cut' });
+      setEditedWords(prev => {
+        const updated = [...prev];
+        // Mark cut words as deleted
+        for (let i = startIdx; i <= endIdx; i++) {
+          updated[i] = { ...updated[i], deleted: true };
+        }
+        return updated;
+      });
+      setHasEdits(true);
+      debug('Edit', `Cut ${cutWords.length} word(s): "${cutWords.map(w => w.word.text).join(' ')}"`);
+      handled = true;
     }
     // Paste - Cmd/Ctrl+V
     else if ((e.metaKey || e.ctrlKey) && e.key === 'v' && clipboard) {
@@ -348,20 +408,20 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       if (cursorPosition === 'after') {
         // Move from 'after' last word back to 'before' last word
         setCursorPosition('before');
-        debug('Nav', `ArrowLeft: cursor position 'after' → 'before' (word ${cursorIndex})`);
+        debug('Nav', `ArrowLeft: cursor 'after' → 'before' "${editedWords[cursorIndex]?.word.text}"`);
       } else {
         newIndex = Math.max(0, cursorIndex - 1);
-        debug('Nav', `ArrowLeft: ${cursorIndex} → ${newIndex}`);
+        debug('Nav', `ArrowLeft: "${editedWords[cursorIndex]?.word.text}" → "${editedWords[newIndex]?.word.text}"`);
       }
       handled = true;
     } else if (e.key === 'ArrowRight') {
       if (cursorIndex === wordCount - 1 && cursorPosition === 'before') {
         // At last word with cursor before it - move cursor to after
         setCursorPosition('after');
-        debug('Nav', `ArrowRight: cursor position 'before' → 'after' (word ${cursorIndex})`);
+        debug('Nav', `ArrowRight: cursor 'before' → 'after' "${editedWords[cursorIndex]?.word.text}"`);
       } else if (cursorPosition !== 'after') {
         newIndex = Math.min(wordCount - 1, cursorIndex + 1);
-        debug('Nav', `ArrowRight: ${cursorIndex} → ${newIndex}`);
+        debug('Nav', `ArrowRight: "${editedWords[cursorIndex]?.word.text}" → "${editedWords[newIndex]?.word.text}"`);
       }
       handled = true;
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
@@ -410,16 +470,16 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         }
         
         newIndex = bestMatch;
-        debug('Nav', `${e.key}: ${cursorIndex} → ${newIndex}`);
+        debug('Nav', `${e.key}: "${editedWords[cursorIndex]?.word.text}" → "${editedWords[newIndex]?.word.text}"`);
       }
       handled = true;
     } else if (e.key === 'Home') {
       newIndex = 0;
-      debug('Nav', `Home: ${cursorIndex} → ${newIndex}`);
+      debug('Nav', `Home: "${editedWords[cursorIndex]?.word.text}" → "${editedWords[newIndex]?.word.text}"`);
       handled = true;
     } else if (e.key === 'End') {
       newIndex = wordCount - 1;
-      debug('Nav', `End: ${cursorIndex} → ${newIndex}`);
+      debug('Nav', `End: "${editedWords[cursorIndex]?.word.text}" → "${editedWords[newIndex]?.word.text}"`);
       handled = true;
     } else if (e.key === 'Enter' || e.key === ' ') {
       // Toggle play/pause from cursor position
@@ -617,6 +677,8 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         onCopy={handleCopy}
         onFocus={() => setIsFocused(true)}
         onBlur={() => setIsFocused(false)}
+        onMouseUp={handleMouseUp}
+        onMouseLeave={handleMouseUp}
         role="listbox"
         aria-label="Transcript words"
         aria-activedescendant={`word-${cursorIndex}`}
@@ -644,6 +706,8 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               }${showCursorBefore ? ' transcript-viewer__word--cursor-before' : ''
               }${showCursorAfter ? ' transcript-viewer__word--cursor-after' : ''}`}
               onClick={(e) => handleWordClick(ew.word, index, e)}
+              onMouseDown={(e) => handleWordMouseDown(index, e)}
+              onMouseEnter={() => handleWordMouseEnter(index)}
               role="option"
               aria-selected={isSelected || isCursor}
               title={`${ew.word.startMs}ms - ${ew.word.endMs}ms${

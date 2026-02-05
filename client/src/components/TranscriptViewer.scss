@@ -137,6 +137,7 @@
     color: #ddd;
     word-wrap: break-word;
     overflow-wrap: break-word;
+    user-select: none; // Prevent native text selection for drag-to-select
     
     &:focus {
       outline: none;
