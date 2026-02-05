@@ -154,6 +154,39 @@
         background: rgba(76, 175, 80, 0.25);
       }
     }
+
+    // Visual cursor indicator (blinking line)
+    &--cursor-before::before,
+    &--cursor-after::after {
+      content: '';
+      position: absolute;
+      top: 2px;
+      bottom: 2px;
+      width: 2px;
+      background: #2196F3;
+      animation: cursor-blink 1s step-end infinite;
+    }
+
+    &--cursor-before {
+      position: relative;
+      
+      &::before {
+        left: -2px;
+      }
+    }
+
+    &--cursor-after {
+      position: relative;
+      
+      &::after {
+        right: 2px; // Account for the trailing space
+      }
+    }
+
+    @keyframes cursor-blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
     
     // When both cursor and active
     &--cursor.transcript-viewer__word--active {

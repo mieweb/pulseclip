@@ -90,6 +90,10 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
   const [hasEdits, setHasEdits] = useState(false);
   
+  // Cursor position: 'before' means cursor is before cursorIndex word,
+  // 'after' means cursor is after the last word (only valid when cursorIndex is last word)
+  const [cursorPosition, setCursorPosition] = useState<'before' | 'after'>('before');
+  
   // Helper to save current state to undo stack before making changes
   const pushUndo = useCallback(() => {
     setUndoStack(prev => [...prev, editedWords]);
@@ -117,6 +121,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     setUndoStack([]);
     setHasEdits(false);
     setCursorIndex(0);
+    setCursorPosition('before');
     setSelection(null);
     setSelectionAnchor(null);
   }, [transcript]);
@@ -129,6 +134,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     }
     if (!isSeeking && activeWordIndex !== null && activeWordIndex >= 0) {
       setCursorIndex(activeWordIndex);
+      setCursorPosition('before');
       setSelection(null);
       setSelectionAnchor(null);
     }
@@ -222,6 +228,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const handleWordClick = (word: TranscriptWord, index: number, e: React.MouseEvent) => {
     debug('Click', `Word: "${word.text}" (index: ${index}, start: ${word.startMs}ms)`);
     setCursorIndex(index);
+    setCursorPosition('before');
     userSetCursor.current = index;
     
     if (e.shiftKey && selectionAnchor !== null) {
@@ -302,18 +309,19 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     // Paste - Cmd/Ctrl+V
     else if ((e.metaKey || e.ctrlKey) && e.key === 'v' && clipboard) {
       pushUndo();
+      // Insert at cursor position: if 'before', insert before cursorIndex; if 'after', insert after cursorIndex
+      const insertIndex = cursorPosition === 'after' ? cursorIndex + 1 : cursorIndex;
       setEditedWords(prev => {
         const updated = [...prev];
-        // Insert clipboard words at cursor position, marked as inserted
-        const insertIndex = cursorIndex + 1;
         const wordsToInsert = clipboard.words.map(w => ({ ...w, deleted: false, inserted: true }));
         updated.splice(insertIndex, 0, ...wordsToInsert);
         return updated;
       });
       setHasEdits(true);
-      debug('Edit', `Pasted ${clipboard.words.length} words at position ${cursorIndex + 1}`);
-      // Move cursor to end of pasted content
-      setCursorIndex(cursorIndex + clipboard.words.length);
+      debug('Edit', `Pasted ${clipboard.words.length} words at position ${insertIndex}`);
+      // Move cursor to the last pasted word with cursor after it
+      setCursorIndex(insertIndex + clipboard.words.length - 1);
+      setCursorPosition('after');
       setSelection(null);
       setSelectionAnchor(null);
       handled = true;
@@ -334,10 +342,20 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       handled = true;
     }
     else if (e.key === 'ArrowLeft') {
-      newIndex = Math.max(0, cursorIndex - 1);
+      if (cursorPosition === 'after') {
+        // Move from 'after' last word back to 'before' last word
+        setCursorPosition('before');
+      } else {
+        newIndex = Math.max(0, cursorIndex - 1);
+      }
       handled = true;
     } else if (e.key === 'ArrowRight') {
-      newIndex = Math.min(wordCount - 1, cursorIndex + 1);
+      if (cursorIndex === wordCount - 1 && cursorPosition === 'before') {
+        // At last word with cursor before it - move cursor to after
+        setCursorPosition('after');
+      } else if (cursorPosition !== 'after') {
+        newIndex = Math.min(wordCount - 1, cursorIndex + 1);
+      }
       handled = true;
     } else if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
       // Find word on previous/next visual row
@@ -446,7 +464,10 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     if (handled) {
       e.preventDefault();
       e.stopPropagation();
-      setCursorIndex(newIndex);
+      if (newIndex !== cursorIndex) {
+        setCursorIndex(newIndex);
+        setCursorPosition('before');
+      }
 
       if (e.shiftKey && e.key !== 'Delete' && e.key !== 'Backspace') {
         // Handle selection (not for delete operations)
@@ -468,7 +489,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       const wordElement = contentRef.current?.querySelector(`[data-word-index="${newIndex}"]`);
       wordElement?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
-  }, [cursorIndex, selectionAnchor, editedWords, mediaRef, hasEdits, clipboard, selection, transcript, pushUndo, undoStack]);
+  }, [cursorIndex, cursorPosition, selectionAnchor, editedWords, mediaRef, hasEdits, clipboard, selection, transcript, pushUndo, undoStack]);
 
   const isWordSelected = (index: number): boolean => {
     if (!selection) return false;
@@ -566,6 +587,8 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           const isSelected = isWordSelected(index);
           const isDeleted = ew.deleted;
           const isInserted = ew.inserted;
+          const showCursorBefore = isCursor && cursorPosition === 'before';
+          const showCursorAfter = isCursor && cursorPosition === 'after' && index === editedWords.length - 1;
           
           return (
             <span
@@ -577,7 +600,9 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               }${isCursor ? ' transcript-viewer__word--cursor' : ''
               }${isSelected ? ' transcript-viewer__word--selected' : ''
               }${isDeleted ? ' transcript-viewer__word--deleted' : ''
-              }${isInserted ? ' transcript-viewer__word--inserted' : ''}`}
+              }${isInserted ? ' transcript-viewer__word--inserted' : ''
+              }${showCursorBefore ? ' transcript-viewer__word--cursor-before' : ''
+              }${showCursorAfter ? ' transcript-viewer__word--cursor-after' : ''}`}
               onClick={(e) => handleWordClick(ew.word, index, e)}
               role="option"
               aria-selected={isSelected || isCursor}
