@@ -159,7 +159,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         const direction = e.key === 'ArrowUp' ? -1 : 1;
         let bestMatch = cursorIndex;
         let bestDistance = Infinity;
-        let foundDifferentRow = false;
+        let targetRowTop: number | null = null;
         
         for (let i = cursorIndex + direction; i >= 0 && i < wordCount; i += direction) {
           const el = contentRef.current?.querySelector(`[data-word-index="${i}"]`) as HTMLElement;
@@ -171,17 +171,25 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
             : rect.top >= currentRect.bottom;
           
           if (isOnDifferentRow) {
-            foundDifferentRow = true;
-            const centerX = rect.left + rect.width / 2;
-            const distance = Math.abs(centerX - currentCenterX);
-            
-            if (distance < bestDistance) {
-              bestDistance = distance;
-              bestMatch = i;
+            // First word on a different row - this establishes our target row
+            if (targetRowTop === null) {
+              targetRowTop = rect.top;
             }
-          } else if (foundDifferentRow) {
-            // We've moved past the adjacent row, stop searching
-            break;
+            
+            // Only consider words on the same row as the first different-row word we found
+            const isSameTargetRow = Math.abs(rect.top - targetRowTop) < 5; // 5px tolerance
+            if (isSameTargetRow) {
+              const centerX = rect.left + rect.width / 2;
+              const distance = Math.abs(centerX - currentCenterX);
+              
+              if (distance < bestDistance) {
+                bestDistance = distance;
+                bestMatch = i;
+              }
+            } else {
+              // We've moved past the target row, stop searching
+              break;
+            }
           }
         }
         
