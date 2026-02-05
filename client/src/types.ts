@@ -6,6 +6,30 @@ export interface TranscriptWord {
   confidence?: number;
 }
 
+/**
+ * An editable word that references the original transcript word.
+ * Used in the edited timeline to track deletions and reordering.
+ */
+export interface EditableWord {
+  /** Reference to original word in transcript.words */
+  originalIndex: number;
+  /** The word data (from original transcript) */
+  word: TranscriptWord;
+  /** Whether this word is marked as deleted */
+  deleted: boolean;
+}
+
+/**
+ * Represents a contiguous segment of playback from the original media.
+ * Used when playing back an edited timeline with potentially reordered/deleted words.
+ */
+export interface PlaybackSegment {
+  startMs: number;
+  endMs: number;
+  /** Indices into the editedWords array that this segment covers */
+  editedIndices: number[];
+}
+
 export interface TranscriptSegment {
   text: string;
   startMs: number;

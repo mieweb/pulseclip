@@ -18,7 +18,21 @@
       font-size: 16px;
       font-weight: 600;
       color: white;
+      display: flex;
+      align-items: center;
+      gap: 8px;
     }
+  }
+
+  &__edited-badge {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 2px 6px;
+    background: #ff9800;
+    color: #000;
+    border-radius: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
   }
   
   &__meta {
@@ -31,6 +45,47 @@
       padding: 2px 8px;
       background: rgba(255, 255, 255, 0.1);
       border-radius: 4px;
+    }
+  }
+
+  &__deleted-count {
+    background: rgba(244, 67, 54, 0.2) !important;
+    color: #f44336 !important;
+  }
+
+  &__edit-bar {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 16px;
+    background: rgba(255, 152, 0, 0.1);
+    border-bottom: 1px solid rgba(255, 152, 0, 0.3);
+    flex-shrink: 0;
+  }
+
+  &__edit-hint {
+    font-size: 12px;
+    color: #ff9800;
+  }
+
+  &__play-edited-btn {
+    padding: 6px 12px;
+    background: #4CAF50;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 12px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.2s;
+
+    &:hover:not(:disabled) {
+      background: #43a047;
+    }
+
+    &:disabled {
+      background: #666;
+      cursor: not-allowed;
     }
   }
   
@@ -78,10 +133,27 @@
       color: white;
       font-weight: 500;
     }
+
+    &--deleted {
+      text-decoration: line-through;
+      opacity: 0.4;
+      color: #f44336;
+      background: rgba(244, 67, 54, 0.1);
+      
+      &:hover {
+        opacity: 0.7;
+        background: rgba(244, 67, 54, 0.2);
+      }
+    }
     
     // When both cursor and active
     &--cursor.transcript-viewer__word--active {
       outline-color: #fff;
+    }
+
+    // Cursor on deleted word
+    &--cursor.transcript-viewer__word--deleted {
+      outline-color: #f44336;
     }
   }
   
