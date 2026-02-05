@@ -45,6 +45,12 @@ app.use(express.json());
 // Serve uploaded files
 app.use('/uploads', express.static(join(__dirname, '../uploads')));
 
+// In production, serve the client build
+const clientDistPath = join(__dirname, '../../client/dist');
+if (existsSync(clientDistPath)) {
+  app.use(express.static(clientDistPath));
+}
+
 // Health check
 app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
@@ -180,7 +186,17 @@ app.delete('/api/cache', (_req, res) => {
   res.json({ success: true, message: 'Cache cleared' });
 });
 
+// SPA fallback - serve index.html for all non-API routes (must be after all other routes)
+if (existsSync(clientDistPath)) {
+  app.get('*', (_req, res) => {
+    res.sendFile(join(clientDistPath, 'index.html'));
+  });
+}
+
 app.listen(port, () => {
   console.log(`Available providers: ${providerRegistry.list().map((p) => p.displayName).join(', ')}`);
   console.log(`Server running on http://localhost:${port}`);
+  if (existsSync(clientDistPath)) {
+    console.log(`Serving client from ${clientDistPath}`);
+  }
 });

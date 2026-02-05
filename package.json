@@ -13,7 +13,9 @@
     "dev": "concurrently \"npm run dev:server\" \"npm run dev:client\"",
     "build": "npm run build --workspaces",
     "build:server": "npm run build --workspace=server",
-    "build:client": "npm run build --workspace=client"
+    "build:client": "npm run build --workspace=client",
+    "start": "npm run start --workspace=server",
+    "prod": "npm run build && npm run start"
   },
   "keywords": ["transcription", "audio", "video", "assemblyai"],
   "author": "",
