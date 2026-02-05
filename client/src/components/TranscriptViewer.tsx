@@ -4,6 +4,227 @@ import type { Transcript, TranscriptWord, EditableWord, PlaybackSegment } from '
 import { debug } from '../debug';
 import './TranscriptViewer.scss';
 
+/** Default filler words to remove */
+const DEFAULT_FILLER_WORDS = [
+  'um', 'uh', 'umm', 'uhh', 'uh-huh', 'mm-hmm', 'hmm', 'hm',
+  'er', 'err', 'ah', 'ahh', 'eh', 'oh', 'ooh',
+  'like', 'you know', 'i mean', 'so', 'well', 'actually',
+  'basically', 'literally', 'right', 'okay', 'ok',
+];
+
+/** Props for the filler words modal */
+interface FillerWordsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  onApply: (fillerWords: string[]) => void;
+  matchingCounts: Map<string, number>;
+}
+
+/** Modal component for selecting filler words to remove */
+const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply, matchingCounts }) => {
+  const [searchTerm, setSearchTerm] = useState('');
+  const [selectedFillers, setSelectedFillers] = useState<Set<string>>(new Set(DEFAULT_FILLER_WORDS));
+  const [customWord, setCustomWord] = useState('');
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Filter filler words based on search
+  const filteredFillers = DEFAULT_FILLER_WORDS.filter(word =>
+    word.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  // Get custom words that have been added
+  const customFillers = Array.from(selectedFillers).filter(
+    word => !DEFAULT_FILLER_WORDS.includes(word)
+  ).filter(word =>
+    word.toLowerCase().includes(searchTerm.toLowerCase())
+  );
+
+  const toggleFiller = (word: string) => {
+    setSelectedFillers(prev => {
+      const next = new Set(prev);
+      if (next.has(word)) {
+        next.delete(word);
+      } else {
+        next.add(word);
+      }
+      return next;
+    });
+  };
+
+  const handleAddCustom = () => {
+    const trimmed = customWord.trim().toLowerCase();
+    if (trimmed && !selectedFillers.has(trimmed)) {
+      setSelectedFillers(prev => new Set([...prev, trimmed]));
+      setCustomWord('');
+    }
+  };
+
+  const handleApply = () => {
+    onApply(Array.from(selectedFillers));
+    onClose();
+  };
+
+  const selectAll = () => {
+    setSelectedFillers(new Set([...DEFAULT_FILLER_WORDS, ...customFillers]));
+  };
+
+  const selectNone = () => {
+    setSelectedFillers(new Set());
+  };
+
+  // Calculate total matches
+  const totalMatches = Array.from(selectedFillers).reduce(
+    (sum, word) => sum + (matchingCounts.get(word) || 0),
+    0
+  );
+
+  // Close on escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [isOpen, onClose]);
+
+  // Focus trap and click outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isOpen, onClose]);
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="filler-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="filler-modal-title">
+      <div className="filler-modal" ref={modalRef}>
+        <div className="filler-modal__header">
+          <h3 id="filler-modal-title">Remove Filler Words</h3>
+          <button className="filler-modal__close" onClick={onClose} aria-label="Close modal">
+            ×
+          </button>
+        </div>
+
+        <div className="filler-modal__search">
+          <input
+            type="text"
+            placeholder="Search filler words..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            aria-label="Search filler words"
+          />
+        </div>
+
+        <div className="filler-modal__actions-row">
+          <button onClick={selectAll} className="filler-modal__action-btn">
+            Select All
+          </button>
+          <button onClick={selectNone} className="filler-modal__action-btn">
+            Select None
+          </button>
+        </div>
+
+        <div className="filler-modal__list">
+          {filteredFillers.map(word => {
+            const count = matchingCounts.get(word) || 0;
+            return (
+              <label key={word} className="filler-modal__item">
+                <input
+                  type="checkbox"
+                  checked={selectedFillers.has(word)}
+                  onChange={() => toggleFiller(word)}
+                />
+                <span className="filler-modal__word">{word}</span>
+                {count > 0 && (
+                  <span className="filler-modal__count">({count})</span>
+                )}
+              </label>
+            );
+          })}
+          {customFillers.map(word => {
+            const count = matchingCounts.get(word) || 0;
+            return (
+              <label key={word} className="filler-modal__item filler-modal__item--custom">
+                <input
+                  type="checkbox"
+                  checked={selectedFillers.has(word)}
+                  onChange={() => toggleFiller(word)}
+                />
+                <span className="filler-modal__word">{word}</span>
+                {count > 0 && (
+                  <span className="filler-modal__count">({count})</span>
+                )}
+                <button
+                  className="filler-modal__remove-custom"
+                  onClick={(e) => {
+                    e.preventDefault();
+                    setSelectedFillers(prev => {
+                      const next = new Set(prev);
+                      next.delete(word);
+                      return next;
+                    });
+                  }}
+                  aria-label={`Remove ${word}`}
+                >
+                  ×
+                </button>
+              </label>
+            );
+          })}
+        </div>
+
+        <div className="filler-modal__add-custom">
+          <input
+            type="text"
+            placeholder="Add custom filler word..."
+            value={customWord}
+            onChange={(e) => setCustomWord(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault();
+                handleAddCustom();
+              }
+            }}
+            aria-label="Add custom filler word"
+          />
+          <button onClick={handleAddCustom} disabled={!customWord.trim()}>
+            Add
+          </button>
+        </div>
+
+        <div className="filler-modal__footer">
+          <span className="filler-modal__summary">
+            {selectedFillers.size} words selected • {totalMatches} matches
+          </span>
+          <div className="filler-modal__buttons">
+            <button className="filler-modal__cancel" onClick={onClose}>
+              Cancel
+            </button>
+            <button
+              className="filler-modal__apply"
+              onClick={handleApply}
+              disabled={totalMatches === 0}
+            >
+              Mark as Deleted ({totalMatches})
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface TranscriptViewerProps {
   transcript: Transcript;
   mediaRef: RefObject<HTMLAudioElement | HTMLVideoElement>;
@@ -113,9 +334,12 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [isSeeking, setIsSeeking] = useState(false);
   const [isPlayingSequence, setIsPlayingSequence] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
+  const [showFillerModal, setShowFillerModal] = useState(false);
   const contentRef = useRef<HTMLDivElement>(null);
   const userSetCursor = useRef<number | null>(null);
   const isDragging = useRef<boolean>(false);
+  const longPressTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const longPressTriggered = useRef<boolean>(false);
   const wordPlaybackStartMs = useRef<number | null>(null);
   const wordPlaybackEndMs = useRef<number | null>(null);
   
@@ -291,9 +515,36 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     }
   };
 
+  // Helper to toggle deleted state on a word
+  const toggleWordDeleted = useCallback((index: number, source: string) => {
+    const ew = editedWords[index];
+    if (!ew) return;
+    
+    pushUndo();
+    const newEditedWords = [...editedWords];
+    newEditedWords[index] = { ...ew, deleted: !ew.deleted };
+    setEditedWords(newEditedWords);
+    setHasEdits(true);
+    debug('Edit', `${source} toggled "${ew.word.text}" to ${ew.deleted ? 'restored' : 'deleted'}`);
+  }, [editedWords, pushUndo]);
+
+  const handleWordDoubleClick = (index: number, e: React.MouseEvent) => {
+    e.preventDefault();
+    // Don't trigger if long press already fired
+    if (longPressTriggered.current) return;
+    toggleWordDeleted(index, 'Double-click');
+  };
+
   const handleWordMouseDown = (index: number, e: React.MouseEvent) => {
     // Only handle left mouse button
     if (e.button !== 0) return;
+    
+    // Start long press timer (500ms)
+    longPressTriggered.current = false;
+    longPressTimer.current = setTimeout(() => {
+      longPressTriggered.current = true;
+      toggleWordDeleted(index, 'Long-press');
+    }, 500);
     
     isDragging.current = true;
     setSelectionAnchor(index);
@@ -304,6 +555,12 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   };
 
   const handleWordMouseEnter = (index: number) => {
+    // Cancel long press if dragging to another word
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    
     if (!isDragging.current || selectionAnchor === null) return;
     
     // Update selection as mouse drags over words
@@ -315,6 +572,12 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   };
 
   const handleMouseUp = () => {
+    // Clear long press timer
+    if (longPressTimer.current) {
+      clearTimeout(longPressTimer.current);
+      longPressTimer.current = null;
+    }
+    
     if (isDragging.current) {
       isDragging.current = false;
       if (selection) {
@@ -589,6 +852,47 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const activeWordCount = editedWords.filter(ew => !ew.deleted).length;
   const deletedWordCount = editedWords.length - activeWordCount;
 
+  // Calculate filler word matches for modal
+  const getFillerMatchCounts = useCallback((): Map<string, number> => {
+    const counts = new Map<string, number>();
+    for (const ew of editedWords) {
+      if (ew.deleted) continue;
+      const wordText = ew.word.text.toLowerCase().replace(/[.,!?;:]/g, '');
+      for (const filler of DEFAULT_FILLER_WORDS) {
+        if (wordText === filler) {
+          counts.set(filler, (counts.get(filler) || 0) + 1);
+        }
+      }
+      // Also check for the exact word in case it's a custom filler
+      counts.set(wordText, (counts.get(wordText) || 0) + 1);
+    }
+    return counts;
+  }, [editedWords]);
+
+  // Handle removing filler words
+  const handleRemoveFillers = useCallback((fillerWords: string[]) => {
+    const fillerSet = new Set(fillerWords.map(f => f.toLowerCase()));
+    const newEditedWords = editedWords.map(ew => {
+      if (ew.deleted) return ew;
+      const wordText = ew.word.text.toLowerCase().replace(/[.,!?;:]/g, '');
+      if (fillerSet.has(wordText)) {
+        return { ...ew, deleted: true };
+      }
+      return ew;
+    });
+    
+    const deletedCount = newEditedWords.filter((ew, i) => 
+      ew.deleted && !editedWords[i].deleted
+    ).length;
+    
+    if (deletedCount > 0) {
+      pushUndo();
+      setEditedWords(newEditedWords);
+      setHasEdits(true);
+      debug('Edit', `Removed ${deletedCount} filler words`);
+    }
+  }, [editedWords, pushUndo]);
+
   // Notify parent when hasEdits changes
   useEffect(() => {
     onHasEditsChange?.(hasEdits);
@@ -631,24 +935,40 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     <div className="transcript-viewer">
       <div className="transcript-viewer__header">
         <h3>Transcript {hasEdits && <span className="transcript-viewer__edited-badge">Edited</span>}</h3>
-        <div className="transcript-viewer__meta">
-          <span>{activeWordCount} words</span>
-          {deletedWordCount > 0 && (
-            <span className="transcript-viewer__deleted-count">
-              {deletedWordCount} deleted
-            </span>
-          )}
-          {transcript.speakers && (
-            <span>{transcript.speakers.length} speakers</span>
-          )}
-          <span>{Math.round(transcript.durationMs / 1000)}s</span>
+        <div className="transcript-viewer__header-actions">
+          <button
+            className="transcript-viewer__filler-btn"
+            onClick={() => setShowFillerModal(true)}
+            aria-label="Remove filler words"
+          >
+            Remove Fillers
+          </button>
+          <div className="transcript-viewer__meta">
+            <span>{activeWordCount} words</span>
+            {deletedWordCount > 0 && (
+              <span className="transcript-viewer__deleted-count">
+                {deletedWordCount} deleted
+              </span>
+            )}
+            {transcript.speakers && (
+              <span>{transcript.speakers.length} speakers</span>
+            )}
+            <span>{Math.round(transcript.durationMs / 1000)}s</span>
+          </div>
         </div>
       </div>
+
+      <FillerWordsModal
+        isOpen={showFillerModal}
+        onClose={() => setShowFillerModal(false)}
+        onApply={handleRemoveFillers}
+        matchingCounts={getFillerMatchCounts()}
+      />
 
       {hasEdits && (
         <div className="transcript-viewer__edit-bar">
           <span className="transcript-viewer__edit-hint">
-            Del to toggle delete • ⌘X cut • ⌘V paste • ⌘Z undo{undoStack.length > 0 ? ` (${undoStack.length})` : ''}
+            Double-click or long-press to toggle • Del to delete • ⌘X cut • ⌘V paste • ⌘Z undo{undoStack.length > 0 ? ` (${undoStack.length})` : ''}
           </span>
           <button
             className="transcript-viewer__play-edited-btn"
@@ -706,13 +1026,14 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               }${showCursorBefore ? ' transcript-viewer__word--cursor-before' : ''
               }${showCursorAfter ? ' transcript-viewer__word--cursor-after' : ''}`}
               onClick={(e) => handleWordClick(ew.word, index, e)}
+              onDoubleClick={(e) => handleWordDoubleClick(index, e)}
               onMouseDown={(e) => handleWordMouseDown(index, e)}
               onMouseEnter={() => handleWordMouseEnter(index)}
               role="option"
               aria-selected={isSelected || isCursor}
               title={`${ew.word.startMs}ms - ${ew.word.endMs}ms${
                 ew.word.confidence ? ` (${Math.round(ew.word.confidence * 100)}%)` : ''
-              }${isDeleted ? ' [DELETED]' : ''}${isInserted ? ' [INSERTED]' : ''}`}
+              }${isDeleted ? ' [DELETED - double-click to restore]' : ''}${isInserted ? ' [INSERTED]' : ''}${!isDeleted && !isInserted ? ' (double-click to delete)' : ''}`}
             >
               {ew.word.text}{' '}
             </span>
