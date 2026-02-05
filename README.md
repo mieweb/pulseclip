@@ -1,6 +1,6 @@
-# Voice Transcription POC
+# Pulse Clip
 
-A proof of concept demonstrating audio/video transcription with interactive word-level navigation using pluggable transcription backends.
+<img width="600"  alt="Image" src="https://github.com/user-attachments/assets/95389ff7-c1e4-40bb-b195-7623fa02ac38" />
 
 ## Features
 
