@@ -828,6 +828,52 @@ function App() {
           <span className="app__filename" title={mediaFilename}>
             {mediaFilename}
           </span>
+          {versionInfo?.commitHash && (
+            (() => {
+              const serverHash = versionInfo.commitHash.slice(0, 7);
+              const clientHash = typeof __BUILD_COMMIT_HASH__ !== 'undefined' && __BUILD_COMMIT_HASH__ 
+                ? __BUILD_COMMIT_HASH__.slice(0, 7) 
+                : null;
+              const hashesMatch = clientHash === serverHash;
+              
+              if (hashesMatch || !clientHash) {
+                return (
+                  <a 
+                    href={versionInfo.commitUrl || '#'} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="app__toolbar-version"
+                    title={`Version: ${serverHash}`}
+                  >
+                    {serverHash}
+                  </a>
+                );
+              } else {
+                return (
+                  <div className="app__toolbar-versions">
+                    <a 
+                      href={`https://github.com/mieweb/pulseclip/commit/${clientHash}`}
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="app__toolbar-version app__toolbar-version--client"
+                      title={`Client version: ${clientHash}`}
+                    >
+                      C:{clientHash}
+                    </a>
+                    <a 
+                      href={versionInfo.commitUrl || '#'} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="app__toolbar-version app__toolbar-version--server"
+                      title={`Server version: ${serverHash}`}
+                    >
+                      S:{serverHash}
+                    </a>
+                  </div>
+                );
+              }
+            })()
+          )}
         </div>
 
         <div className="app__toolbar-right">

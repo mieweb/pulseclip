@@ -315,6 +315,45 @@
   }
 }
 
+.app__toolbar-version {
+  color: #666;
+  text-decoration: none;
+  font-size: 10px;
+  font-family: monospace;
+  padding: 2px 5px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  transition: all 0.2s;
+
+  &:hover {
+    color: #4fc3f7;
+    background: rgba(79, 195, 247, 0.1);
+  }
+}
+
+.app__toolbar-versions {
+  display: flex;
+  gap: 3px;
+}
+
+.app__toolbar-version--client {
+  color: #81c784;
+  
+  &:hover {
+    color: #a5d6a7;
+    background: rgba(129, 199, 132, 0.1);
+  }
+}
+
+.app__toolbar-version--server {
+  color: #ffb74d;
+  
+  &:hover {
+    color: #ffcc80;
+    background: rgba(255, 183, 77, 0.1);
+  }
+}
+
 .app__provider-dropdown {
   padding: 6px 12px;
   background: #2a2a4a;
