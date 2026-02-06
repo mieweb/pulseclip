@@ -123,7 +123,11 @@ server/
 │   │   └── registry.ts          # Provider registry
 │   └── types/
 │       └── transcription.ts     # Shared types
-├── uploads/                     # File storage (gitignored)
+├── artipods/                    # Artipod storage (gitignored)
+│   └── {uuid}/                  # Each artipod folder contains:
+│       ├── media.ext            # Original media file
+│       ├── thumbnail.png        # Thumbnail image
+│       └── (future: transcript.json, beats.json, short.mp4)
 ├── package.json
 ├── tsconfig.json
 └── .env.example

@@ -9,7 +9,7 @@ const DATA_DIR = join(__dirname, '../data');
 const FEATURED_FILE = join(DATA_DIR, 'featured.json');
 
 export interface FeaturedPulse {
-  filename: string;
+  artipodId: string;
   title: string;
   thumbnail?: string;
   addedAt: string;
@@ -39,6 +39,17 @@ function loadFeatured(): FeaturedData {
     if (parsed.demos && !parsed.featured) {
       return { featured: parsed.demos };
     }
+    // Handle legacy format with "filename" instead of "artipodId"
+    if (parsed.featured && parsed.featured.length > 0 && parsed.featured[0].filename && !parsed.featured[0].artipodId) {
+      return {
+        featured: parsed.featured.map((p: any) => ({
+          artipodId: p.filename,
+          title: p.title,
+          thumbnail: p.thumbnail,
+          addedAt: p.addedAt,
+        })),
+      };
+    }
     return parsed;
   } catch {
     return { featured: [] };
@@ -57,17 +68,17 @@ export function getFeatured(): FeaturedPulse[] {
 }
 
 // Check if a pulse is marked as featured
-export function isFeatured(filename: string): boolean {
+export function isFeatured(artipodId: string): boolean {
   const data = loadFeatured();
-  return data.featured.some((p) => p.filename === filename);
+  return data.featured.some((p) => p.artipodId === artipodId);
 }
 
 // Add or update a featured pulse
-export function addFeatured(filename: string, title: string, thumbnail?: string): FeaturedPulse {
+export function addFeatured(artipodId: string, title: string, thumbnail?: string): FeaturedPulse {
   const data = loadFeatured();
   
   // Check if already exists
-  const existing = data.featured.find((p) => p.filename === filename);
+  const existing = data.featured.find((p) => p.artipodId === artipodId);
   if (existing) {
     // Update title and thumbnail
     existing.title = title;
@@ -79,7 +90,7 @@ export function addFeatured(filename: string, title: string, thumbnail?: string)
   }
   
   const pulse: FeaturedPulse = {
-    filename,
+    artipodId,
     title,
     thumbnail: thumbnail || undefined,
     addedAt: new Date().toISOString(),
@@ -91,9 +102,9 @@ export function addFeatured(filename: string, title: string, thumbnail?: string)
 }
 
 // Remove a featured pulse
-export function removeFeatured(filename: string): boolean {
+export function removeFeatured(artipodId: string): boolean {
   const data = loadFeatured();
-  const index = data.featured.findIndex((p) => p.filename === filename);
+  const index = data.featured.findIndex((p) => p.artipodId === artipodId);
   
   if (index === -1) {
     return false;

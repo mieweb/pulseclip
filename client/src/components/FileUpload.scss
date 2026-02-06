@@ -3,10 +3,10 @@
   
   &__dropzone {
     border: 2px dashed rgba(255, 255, 255, 0.3);
-    border-radius: 12px;
-    padding: 48px 24px;
+    border-radius: 8px;
+    padding: 24px 16px;
     text-align: center;
-    background: rgba(255, 255, 255, 0.05);
+    background: rgba(255, 255, 255, 0.03);
     transition: all 0.3s ease;
     cursor: pointer;
     
@@ -22,30 +22,31 @@
   }
   
   &__icon {
-    font-size: 56px;
-    margin-bottom: 16px;
+    font-size: 32px;
+    margin-bottom: 8px;
   }
   
   &__text {
-    font-size: 16px;
-    color: #ddd;
-    margin: 0 0 8px 0;
+    font-size: 14px;
+    color: #ccc;
+    margin: 0 0 4px 0;
   }
   
   &__hint {
     color: #888;
-    margin: 8px 0;
+    margin: 4px 0;
+    font-size: 12px;
   }
   
   &__button {
     display: inline-block;
-    padding: 10px 20px;
+    padding: 8px 16px;
     background: #2196F3;
     color: white;
     border-radius: 6px;
     cursor: pointer;
     font-weight: 500;
-    font-size: 14px;
+    font-size: 13px;
     transition: background 0.3s ease;
     
     &:hover {
@@ -58,9 +59,9 @@
   }
   
   &__formats {
-    font-size: 12px;
+    font-size: 11px;
     color: #666;
-    margin-top: 16px;
+    margin-top: 8px;
   }
   
   &__status {

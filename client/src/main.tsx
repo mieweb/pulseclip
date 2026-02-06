@@ -10,7 +10,9 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<App />} />
-        <Route path="/file/:filename" element={<App />} />
+        <Route path="/artipod/:artipodId" element={<App />} />
+        {/* Legacy route for backward compatibility */}
+        <Route path="/file/:artipodId" element={<App />} />
       </Routes>
     </BrowserRouter>
   </React.StrictMode>,

@@ -70,7 +70,7 @@ export interface TranscriptionResult {
 }
 
 export interface FeaturedPulse {
-  filename: string;
+  artipodId: string;
   title: string;
   thumbnail?: string;
   addedAt: string;

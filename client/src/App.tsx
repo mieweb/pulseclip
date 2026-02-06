@@ -10,12 +10,13 @@ import './App.scss';
 type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
 
 function App() {
-  const { filename: urlFilename } = useParams<{ filename: string }>();
+  const { artipodId: urlArtipodId } = useParams<{ artipodId: string }>();
   const navigate = useNavigate();
   
   const [providers, setProviders] = useState<Provider[]>([]);
   const [selectedProvider, setSelectedProvider] = useState<string>('');
   const [mediaUrl, setMediaUrl] = useState<string | null>(null);
+  const [artipodId, setArtipodId] = useState<string>('');
   const [mediaFilename, setMediaFilename] = useState<string>('');
   const [transcribing, setTranscribing] = useState(false);
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
@@ -47,27 +48,28 @@ function App() {
     ? 'ready'
     : 'upload';
 
-  // Load file from URL parameter on mount
+  // Load artipod from URL parameter on mount
   useEffect(() => {
-    if (urlFilename && !mediaUrl) {
+    if (urlArtipodId && !mediaUrl) {
       setLoading(true);
-      fetch(`/api/file/${urlFilename}`)
+      fetch(`/api/artipod/${urlArtipodId}`)
         .then((res) => {
-          if (!res.ok) throw new Error('File not found');
+          if (!res.ok) throw new Error('Artipod not found');
           return res.json();
         })
         .then((data) => {
           setMediaUrl(data.url);
+          setArtipodId(data.artipodId);
           setMediaFilename(data.filename);
         })
         .catch((err) => {
-          console.error('Failed to load file:', err);
-          setError('File not found. It may have been deleted.');
+          console.error('Failed to load artipod:', err);
+          setError('Artipod not found. It may have been deleted.');
           navigate('/', { replace: true });
         })
         .finally(() => setLoading(false));
     }
-  }, [urlFilename, mediaUrl, navigate]);
+  }, [urlArtipodId, mediaUrl, navigate]);
 
   // Load available providers on mount
   useEffect(() => {
@@ -99,8 +101,8 @@ function App() {
 
   // Check if current pulse is featured
   useEffect(() => {
-    if (mediaFilename) {
-      fetch(`/api/featured/${mediaFilename}`)
+    if (artipodId) {
+      fetch(`/api/featured/${artipodId}`)
         .then((res) => res.json())
         .then((data) => {
           setIsCurrentPulseFeatured(data.isFeatured);
@@ -111,7 +113,7 @@ function App() {
     } else {
       setIsCurrentPulseFeatured(false);
     }
-  }, [mediaFilename]);
+  }, [artipodId]);
 
   // Handle spacebar for play/pause toggle
   useEffect(() => {
@@ -141,16 +143,17 @@ function App() {
     return () => document.removeEventListener('keydown', handleKeyDown);
   }, []);
 
-  const handleFileUploaded = (url: string, filename: string) => {
+  const handleFileUploaded = (url: string, newArtipodId: string, filename: string) => {
     // Reset auto-transcribe flag for new file
     hasAutoTranscribed.current = false;
     setMediaUrl(url);
+    setArtipodId(newArtipodId);
     setMediaFilename(filename);
     setTranscriptionResult(null);
     setError(null);
     setMenuOpen(false);
-    // Navigate to file-specific URL
-    navigate(`/file/${filename}`, { replace: true });
+    // Navigate to artipod-specific URL
+    navigate(`/artipod/${newArtipodId}`, { replace: true });
   };
 
   const handleTranscribe = async (skipCache = false) => {
@@ -206,6 +209,7 @@ function App() {
 
   const handleNewPulse = () => {
     setMediaUrl(null);
+    setArtipodId('');
     setMediaFilename('');
     setTranscriptionResult(null);
     setError(null);
@@ -233,7 +237,7 @@ function App() {
   };
 
   const handleToggleFeatured = async () => {
-    if (!mediaFilename || !apiKey) {
+    if (!artipodId || !apiKey) {
       setShowApiKeyModal(true);
       return;
     }
@@ -241,7 +245,7 @@ function App() {
     if (isCurrentPulseFeatured) {
       // Remove from featured
       try {
-        const response = await fetch(`/api/featured/${mediaFilename}`, {
+        const response = await fetch(`/api/featured/${artipodId}`, {
           method: 'DELETE',
           headers: {
             'X-API-Key': apiKey,
@@ -255,14 +259,14 @@ function App() {
 
         if (response.ok) {
           setIsCurrentPulseFeatured(false);
-          setFeaturedPulses((prev) => prev.filter((p) => p.filename !== mediaFilename));
+          setFeaturedPulses((prev) => prev.filter((p) => p.artipodId !== artipodId));
         }
       } catch (err) {
         console.error('Failed to remove from featured:', err);
       }
     } else {
       // Show featured modal to set title/thumbnail
-      const existingPulse = featuredPulses.find((p) => p.filename === mediaFilename);
+      const existingPulse = featuredPulses.find((p) => p.artipodId === artipodId);
       setFeaturedTitle(existingPulse?.title || mediaFilename);
       setFeaturedThumbnail(existingPulse?.thumbnail || '');
       setShowFeaturedModal(true);
@@ -271,7 +275,7 @@ function App() {
   };
 
   const handleFeaturedSubmit = async () => {
-    if (!mediaFilename || !apiKey) {
+    if (!artipodId || !apiKey) {
       setShowApiKeyModal(true);
       return;
     }
@@ -284,7 +288,7 @@ function App() {
           'X-API-Key': apiKey,
         },
         body: JSON.stringify({
-          filename: mediaFilename,
+          artipodId,
           title: featuredTitle.trim() || mediaFilename,
           thumbnail: featuredThumbnail.trim() || undefined,
         }),
@@ -299,7 +303,7 @@ function App() {
         const data = await response.json();
         setIsCurrentPulseFeatured(true);
         setFeaturedPulses((prev) => {
-          const filtered = prev.filter((p) => p.filename !== mediaFilename);
+          const filtered = prev.filter((p) => p.artipodId !== artipodId);
           return [...filtered, data.pulse];
         });
         setShowFeaturedModal(false);
@@ -312,7 +316,7 @@ function App() {
   };
 
   const handleDeletePulse = async () => {
-    if (!mediaFilename) return;
+    if (!artipodId) return;
     
     if (!apiKey) {
       setShowApiKeyModal(true);
@@ -325,7 +329,7 @@ function App() {
     }
 
     try {
-      const response = await fetch(`/api/file/${mediaFilename}`, {
+      const response = await fetch(`/api/artipod/${artipodId}`, {
         method: 'DELETE',
         headers: {
           'X-API-Key': apiKey,
@@ -339,7 +343,7 @@ function App() {
 
       if (response.ok) {
         // Remove from featured if it was there
-        setFeaturedPulses((prev) => prev.filter((p) => p.filename !== mediaFilename));
+        setFeaturedPulses((prev) => prev.filter((p) => p.artipodId !== artipodId));
         // Navigate to home
         handleNewPulse();
       } else {
@@ -353,7 +357,7 @@ function App() {
   };
 
   const handleCaptureThumbnail = async (timestampMs: number): Promise<boolean> => {
-    if (!mediaRef.current || !mediaFilename || !apiKey) {
+    if (!mediaRef.current || !artipodId || !apiKey) {
       if (!apiKey) setShowApiKeyModal(true);
       return false;
     }
@@ -401,7 +405,7 @@ function App() {
         },
         body: JSON.stringify({
           imageData,
-          filename: mediaFilename,
+          artipodId,
         }),
       });
 
@@ -426,8 +430,8 @@ function App() {
           'X-API-Key': apiKey,
         },
         body: JSON.stringify({
-          filename: mediaFilename,
-          title: featuredPulses.find((p) => p.filename === mediaFilename)?.title || mediaFilename,
+          artipodId,
+          title: featuredPulses.find((p) => p.artipodId === artipodId)?.title || mediaFilename,
           thumbnail: url,
         }),
       });
@@ -435,7 +439,7 @@ function App() {
       if (featuredResponse.ok) {
         const data = await featuredResponse.json();
         setFeaturedPulses((prev) => {
-          const filtered = prev.filter((p) => p.filename !== mediaFilename);
+          const filtered = prev.filter((p) => p.artipodId !== artipodId);
           return [...filtered, data.pulse];
         });
         // Also update the featuredThumbnail state if modal is open
@@ -559,41 +563,87 @@ function App() {
       <div className="app app--upload">
         {renderApiKeyModal()}
         {renderFeaturedModal()}
-        <div className="app__upload-container">
-          <h1 className="app__title">🎙️ PulseClip</h1>
-          <FileUpload onFileUploaded={handleFileUploaded} disabled={false} apiKey={apiKey} onAuthError={handleAuthError} />
+        
+        {/* Sticky header banner */}
+        <header className="app__banner">
+          <div className="app__banner-content">
+            <h1 className="app__banner-title">🎙️ PulseClip</h1>
+            <p className="app__banner-tagline">Word-level transcripts for audio &amp; video</p>
+          </div>
+          <nav className="app__banner-links" aria-label="Project links">
+            <a href="https://github.com/mieweb/pulseclip" target="_blank" rel="noopener noreferrer" className="app__banner-link">
+              GitHub
+            </a>
+            <a href="https://github.com/mieweb/pulseclip/blob/main/IMPLEMENTATION.md" target="_blank" rel="noopener noreferrer" className="app__banner-link">
+              Docs
+            </a>
+            <a href="https://github.com/mieweb/pulseclip/issues/new" target="_blank" rel="noopener noreferrer" className="app__banner-link">
+              Report Issue
+            </a>
+          </nav>
+        </header>
+
+        <main className="app__landing">
+          {/* Featured pulses - prominent */}
           {featuredPulses.length > 0 && (
-            <div className="app__featured">
-              <h3 className="app__featured-title">Featured Pulses</h3>
-              <ul className="app__featured-list">
+            <section className="app__featured" aria-label="Featured pulses">
+              <h2 className="app__featured-title">Featured Pulses</h2>
+              <div className="app__featured-grid">
                 {featuredPulses.map((pulse) => (
-                  <li key={pulse.filename}>
-                    <a
-                      href={`/file/${pulse.filename}`}
-                      className={`app__featured-link${pulse.thumbnail ? ' app__featured-link--has-thumb' : ''}`}
-                      onClick={(e) => {
-                        e.preventDefault();
-                        navigate(`/file/${pulse.filename}`);
-                      }}
-                    >
-                      {pulse.thumbnail ? (
-                        <img src={pulse.thumbnail} alt="" className="app__featured-thumb" />
-                      ) : (
-                        <span className="app__featured-icon">🎬</span>
-                      )}
-                      <span className="app__featured-pulse-title">{pulse.title}</span>
-                    </a>
-                  </li>
+                  <a
+                    key={pulse.artipodId}
+                    href={`/artipod/${pulse.artipodId}`}
+                    className="app__featured-card"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate(`/artipod/${pulse.artipodId}`);
+                    }}
+                  >
+                    {pulse.thumbnail ? (
+                      <img src={pulse.thumbnail} alt="" className="app__featured-thumb" />
+                    ) : (
+                      <div className="app__featured-placeholder">🎬</div>
+                    )}
+                    <span className="app__featured-pulse-title">{pulse.title}</span>
+                  </a>
                 ))}
-              </ul>
-            </div>
+              </div>
+            </section>
           )}
+
+          {/* Compact upload area */}
+          <section className="app__upload-section">
+            <h2 className="app__upload-heading">Upload Your Own</h2>
+            <div className="app__upload-container">
+              <FileUpload onFileUploaded={handleFileUploaded} disabled={false} apiKey={apiKey} onAuthError={handleAuthError} />
+            </div>
+          </section>
+
+          {/* Features for first-time visitors */}
+          <section className="app__features" aria-label="Features">
+            <div className="app__feature">
+              <span className="app__feature-icon">⚡</span>
+              <h3 className="app__feature-title">Transcribed Instantly</h3>
+              <p className="app__feature-desc">Upload and get word-level transcripts in seconds</p>
+            </div>
+            <div className="app__feature">
+              <span className="app__feature-icon">✂️</span>
+              <h3 className="app__feature-title">Word-Level Editing</h3>
+              <p className="app__feature-desc">Delete fillers and dead air with a single click</p>
+            </div>
+            <div className="app__feature">
+              <span className="app__feature-icon">📝</span>
+              <h3 className="app__feature-title">Edit Like Text</h3>
+              <p className="app__feature-desc">Cut and paste video as simply as a text editor</p>
+            </div>
+          </section>
+
           {error && (
             <div className="app__error">
               <strong>Error:</strong> {error}
             </div>
           )}
-        </div>
+        </main>
       </div>
     );
   }
@@ -656,12 +706,12 @@ function App() {
           <button className="app__menu-item" onClick={handleNewPulse}>
             📁 New Pulse
           </button>
-          {mediaFilename && (
+          {artipodId && (
             <>
               {isCurrentPulseFeatured ? (
                 <>
                   <button className="app__menu-item" onClick={() => {
-                    const existingPulse = featuredPulses.find((p) => p.filename === mediaFilename);
+                    const existingPulse = featuredPulses.find((p) => p.artipodId === artipodId);
                     setFeaturedTitle(existingPulse?.title || mediaFilename);
                     setFeaturedThumbnail(existingPulse?.thumbnail || '');
                     setShowFeaturedModal(true);

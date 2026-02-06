@@ -1,9 +1,10 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
+import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'fs';
 import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
 import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
@@ -38,14 +39,20 @@ const requireAuth: express.RequestHandler = (req, res, next) => {
   next();
 };
 
-// Configure multer for file uploads
+// Configure multer for file uploads into artipod folders
 const storage = multer.diskStorage({
   destination: (_req, _file, cb) => {
-    cb(null, join(__dirname, '../uploads'));
+    // Create a new artipod folder with UUID for each upload
+    const artipodId = randomUUID();
+    const artipodPath = join(__dirname, '../artipods', artipodId);
+    mkdirSync(artipodPath, { recursive: true });
+    // Store artipodId on the request for later use
+    (_req as any).artipodId = artipodId;
+    cb(null, artipodPath);
   },
   filename: (_req, file, cb) => {
-    const uniqueSuffix = `${Date.now()}-${Math.round(Math.random() * 1e9)}`;
-    cb(null, `${uniqueSuffix}-${file.originalname}`);
+    // Keep original filename inside the artipod folder
+    cb(null, file.originalname);
   },
 });
 
@@ -60,8 +67,8 @@ const upload = multer({
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // Increased limit for base64 image uploads
 
-// Serve uploaded files
-app.use('/uploads', express.static(join(__dirname, '../uploads')));
+// Serve artipod files
+app.use('/artipods', express.static(join(__dirname, '../artipods')));
 
 // In production, serve the client build
 const clientDistPath = join(__dirname, '../../client/dist');
@@ -80,18 +87,20 @@ app.get('/api/providers', (_req, res) => {
   res.json({ providers });
 });
 
-// Upload pulse (protected)
+// Upload pulse (protected) - creates an artipod folder with UUID
 app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
-  const fileUrl = `/uploads/${req.file.filename}`;
-  const localPath = join(__dirname, '../uploads', req.file.filename);
+  const artipodId = (req as any).artipodId;
+  const fileUrl = `/artipods/${artipodId}/${req.file.originalname}`;
+  const localPath = join(__dirname, '../artipods', artipodId, req.file.originalname);
 
   res.json({
     success: true,
-    filename: req.file.filename,
+    artipodId,
+    filename: req.file.originalname,
     url: fileUrl,
     localPath,
     size: req.file.size,
@@ -120,9 +129,11 @@ app.post('/api/transcribe', async (req, res) => {
       });
     }
 
-    // Extract filename from URL and build local path for file upload to provider
-    const filename = mediaUrl.split('/').pop();
-    const localPath = join(__dirname, '../uploads', filename || '');
+    // Extract artipodId and filename from URL: /artipods/{artipodId}/{filename}
+    const urlParts = mediaUrl.split('/');
+    const filename = urlParts.pop() || '';
+    const artipodId = urlParts.pop() || '';
+    const localPath = join(__dirname, '../artipods', artipodId, filename);
 
     // Check cache first (unless skipCache is true) - no auth required for cached results
     if (!skipCache) {
@@ -179,18 +190,68 @@ app.post('/api/transcribe', async (req, res) => {
   }
 });
 
-// Get pulse info by filename
+// Helper to find media file in artipod folder
+function findMediaInArtipod(artipodPath: string): string | null {
+  if (!existsSync(artipodPath)) return null;
+  const files = readdirSync(artipodPath);
+  // Find the first media file (exclude known asset files)
+  const assetFiles = ['thumbnail.png', 'thumbnail.jpg', 'transcript.json', 'beats.json'];
+  const mediaFile = files.find(f => !assetFiles.includes(f) && !f.startsWith('.'));
+  return mediaFile || null;
+}
+
+// Get artipod info by artipodId
+app.get('/api/artipod/:artipodId', (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+  
+  // Check if artipod exists
+  if (!existsSync(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+  
+  const mediaFile = findMediaInArtipod(artipodPath);
+  if (!mediaFile) {
+    return res.status(404).json({ error: 'No media file in artipod' });
+  }
+  
+  const mediaPath = join(artipodPath, mediaFile);
+  const stats = statSync(mediaPath);
+  const fileUrl = `/artipods/${artipodId}/${mediaFile}`;
+  
+  // Check for thumbnail
+  const thumbnailPath = join(artipodPath, 'thumbnail.png');
+  const thumbnailUrl = existsSync(thumbnailPath) ? `/artipods/${artipodId}/thumbnail.png` : undefined;
+  
+  res.json({
+    success: true,
+    artipodId,
+    filename: mediaFile,
+    url: fileUrl,
+    localPath: mediaPath,
+    size: stats.size,
+    thumbnail: thumbnailUrl,
+  });
+});
+
+// Legacy route - redirect old filename format to artipod lookup
 app.get('/api/file/:filename', (req, res) => {
   const { filename } = req.params;
-  const localPath = join(__dirname, '../uploads', filename);
+  // Check if it's a UUID (artipodId)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(filename)) {
+    // Redirect to artipod endpoint
+    return res.redirect(307, `/api/artipod/${filename}`);
+  }
   
-  // Check if pulse exists
-  if (!existsSync(localPath)) {
+  // Legacy: try to find file in old flat structure
+  const localPath = join(__dirname, '../artipods', filename);
+  if (!existsSync(localPath) || !statSync(localPath).isFile()) {
     return res.status(404).json({ error: 'Pulse not found' });
   }
   
   const stats = statSync(localPath);
-  const fileUrl = `/uploads/${filename}`;
+  const fileUrl = `/artipods/${filename}`;
   
   res.json({
     success: true,
@@ -201,10 +262,59 @@ app.get('/api/file/:filename', (req, res) => {
   });
 });
 
-// Delete pulse (protected)
+// Delete artipod (protected)
+app.delete('/api/artipod/:artipodId', requireAuth, async (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+  
+  // Check if artipod exists
+  if (!existsSync(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+  
+  try {
+    const mediaFile = findMediaInArtipod(artipodPath);
+    let cacheRemoved = 0;
+    
+    if (mediaFile) {
+      const mediaPath = join(artipodPath, mediaFile);
+      // Remove cache entries for this artipod (while file still exists for hash computation)
+      cacheRemoved = await removeCacheForFile(mediaPath);
+    }
+    
+    // Remove featured entry if exists
+    const featuredRemoved = removeFeatured(artipodId);
+    
+    // Delete the entire artipod folder
+    rmSync(artipodPath, { recursive: true, force: true });
+    
+    console.log(`Deleted artipod: ${artipodId} (cache entries: ${cacheRemoved}, was featured: ${featuredRemoved})`);
+    
+    res.json({
+      success: true,
+      message: 'Artipod deleted',
+      cacheEntriesRemoved: cacheRemoved,
+      featuredRemoved,
+    });
+  } catch (error) {
+    console.error('Artipod deletion error:', error);
+    res.status(500).json({
+      error: 'Failed to delete artipod',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// Legacy delete route
 app.delete('/api/file/:filename', requireAuth, async (req, res) => {
   const { filename } = req.params;
-  const localPath = join(__dirname, '../uploads', filename);
+  // Check if it's a UUID (artipodId)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (uuidRegex.test(filename)) {
+    return res.redirect(307, `/api/artipod/${filename}`);
+  }
+  
+  const localPath = join(__dirname, '../artipods', filename);
   
   // Check if pulse exists
   if (!existsSync(localPath)) {
@@ -264,19 +374,20 @@ app.get('/api/featured/:filename', (req, res) => {
   res.json({ isFeatured: featured });
 });
 
-// Upload thumbnail (protected) - accepts base64 image data
+// Upload thumbnail (protected) - saves thumbnail.png inside artipod folder
 app.post('/api/thumbnail', requireAuth, (req, res) => {
-  const { imageData, filename } = req.body;
+  const { imageData, artipodId } = req.body;
   
-  if (!imageData || !filename) {
-    return res.status(400).json({ error: 'imageData and filename are required' });
+  if (!imageData || !artipodId) {
+    return res.status(400).json({ error: 'imageData and artipodId are required' });
   }
   
   try {
-    // Ensure thumbnails directory exists
-    const thumbDir = join(__dirname, '../uploads/thumbnails');
-    if (!existsSync(thumbDir)) {
-      mkdirSync(thumbDir, { recursive: true });
+    const artipodPath = join(__dirname, '../artipods', artipodId);
+    
+    // Verify artipod exists
+    if (!existsSync(artipodPath)) {
+      return res.status(404).json({ error: 'Artipod not found' });
     }
     
     // Parse base64 data (format: data:image/png;base64,...)
@@ -289,14 +400,14 @@ app.post('/api/thumbnail', requireAuth, (req, res) => {
     const base64Data = matches[2];
     const buffer = Buffer.from(base64Data, 'base64');
     
-    // Create unique filename based on the media filename
-    const thumbFilename = `${filename.replace(/\.[^.]+$/, '')}-thumb.${extension}`;
-    const thumbPath = join(thumbDir, thumbFilename);
+    // Save as thumbnail.png (or .jpg) inside the artipod folder
+    const thumbFilename = `thumbnail.${extension}`;
+    const thumbPath = join(artipodPath, thumbFilename);
     
     writeFileSync(thumbPath, buffer);
     
-    const thumbUrl = `/uploads/thumbnails/${thumbFilename}`;
-    console.log(`Saved thumbnail: ${thumbFilename}`);
+    const thumbUrl = `/artipods/${artipodId}/${thumbFilename}`;
+    console.log(`Saved thumbnail for artipod ${artipodId}: ${thumbFilename}`);
     
     res.json({ success: true, url: thumbUrl });
   } catch (error) {
@@ -308,21 +419,21 @@ app.post('/api/thumbnail', requireAuth, (req, res) => {
   }
 });
 
-// Add or update a featured pulse (protected)
+// Add or update a featured pulse (protected) - now uses artipodId
 app.post('/api/featured', requireAuth, (req, res) => {
-  const { filename, title, thumbnail } = req.body;
+  const { artipodId, title, thumbnail } = req.body;
   
-  if (!filename) {
-    return res.status(400).json({ error: 'filename is required' });
+  if (!artipodId) {
+    return res.status(400).json({ error: 'artipodId is required' });
   }
   
-  // Verify pulse exists
-  const localPath = join(__dirname, '../uploads', filename);
-  if (!existsSync(localPath)) {
-    return res.status(404).json({ error: 'Pulse not found' });
+  // Verify artipod exists
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+  if (!existsSync(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
   }
   
-  const pulse = addFeatured(filename, title || filename, thumbnail);
+  const pulse = addFeatured(artipodId, title || artipodId, thumbnail);
   res.json({ success: true, pulse });
 });
 

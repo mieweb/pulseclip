@@ -1,10 +1,16 @@
 {
   "featured": [
     {
-      "filename": "1770298155012-389813936-test.mov",
+      "artipodId": "61dd3471-dd98-4ff3-a5ae-27afee3fc8af",
       "title": "Demo Video Test",
-      "addedAt": "2026-02-06T05:33:15.025Z",
-      "thumbnail": "/uploads/thumbnails/1770298155012-389813936-test-thumb.png"
+      "thumbnail": "/artipods/61dd3471-dd98-4ff3-a5ae-27afee3fc8af/thumbnail.png",
+      "addedAt": "2026-02-06T05:33:15.025Z"
+    },
+    {
+      "artipodId": "75bc43eb-7d0d-401c-919b-53b05c225aa4",
+      "title": "Doug Demo to Martin",
+      "thumbnail": "/artipods/61dd3471-dd98-4ff3-a5ae-27afee3fc8af/thumbnail.png",
+      "addedAt": "2026-02-06T09:30:49.013Z"
     }
   ]
 }

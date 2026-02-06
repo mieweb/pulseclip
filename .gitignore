@@ -139,7 +139,7 @@ vite.config.js.timestamp-*
 vite.config.ts.timestamp-*
 
 # Project specific
-server/uploads/
+server/artipods/
 server/cache/
 server/dist/
 client/dist/

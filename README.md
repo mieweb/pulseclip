@@ -2,6 +2,8 @@
 
 <img width="600"  alt="Image" src="https://github.com/user-attachments/assets/95389ff7-c1e4-40bb-b195-7623fa02ac38" />
 
+> 📖 **[Implementation Details](IMPLEMENTATION.md)** | 🎯 **[The MIE Way](mie-pulse.md)**
+
 ## Features
 
 - 🎙️ **Audio & Video Upload** - Drag and drop support for common formats (MP3, WAV, MP4, MOV)
@@ -39,7 +41,7 @@ graph TB
 ## Project Structure
 
 ```
-voicepoc/
+pulseclip/
 ├── client/                 # React frontend
 │   ├── src/
 │   │   ├── components/    # UI components
@@ -56,7 +58,16 @@ voicepoc/
 │   │   │   └── registry.ts
 │   │   ├── types/         # TypeScript types
 │   │   │   └── transcription.ts
+│   │   ├── cache.ts       # Transcription cache
+│   │   ├── featured.ts    # Featured pulses management
 │   │   └── index.ts       # Server entry point
+│   ├── artipods/          # Artipod storage (gitignored)
+│   │   └── {uuid}/        # Each artipod folder contains:
+│   │       ├── media.ext      # Original media file
+│   │       ├── thumbnail.png  # Thumbnail image
+│   │       └── (future: transcript.json, beats.json, short.mp4)
+│   ├── data/              # Persistent data
+│   │   └── featured.json  # Featured pulses list
 │   └── package.json
 └── package.json           # Workspace root
 ```
@@ -124,7 +135,7 @@ Returns list of available transcription providers.
 ```
 
 ### POST /api/upload
-Upload a media file.
+Upload a media file. Creates a new artipod with a UUID.
 
 **Request:** multipart/form-data with `file` field
 
@@ -132,10 +143,26 @@ Upload a media file.
 ```json
 {
   "success": true,
-  "filename": "123456-audio.mp3",
-  "url": "http://localhost:3001/uploads/123456-audio.mp3",
+  "artipodId": "61dd3471-dd98-4ff3-a5ae-27afee3fc8af",
+  "filename": "audio.mp3",
+  "url": "/artipods/61dd3471-dd98-4ff3-a5ae-27afee3fc8af/audio.mp3",
   "size": 1234567,
   "mimetype": "audio/mpeg"
+}
+```
+
+### GET /api/artipod/:artipodId
+Get artipod info by UUID.
+
+**Response:**
+```json
+{
+  "success": true,
+  "artipodId": "61dd3471-dd98-4ff3-a5ae-27afee3fc8af",
+  "filename": "audio.mp3",
+  "url": "/artipods/61dd3471-dd98-4ff3-a5ae-27afee3fc8af/audio.mp3",
+  "size": 1234567,
+  "thumbnail": "/artipods/61dd3471-dd98-4ff3-a5ae-27afee3fc8af/thumbnail.png"
 }
 ```
 
@@ -145,7 +172,7 @@ Transcribe media file using selected provider.
 **Request:**
 ```json
 {
-  "mediaUrl": "http://localhost:3001/uploads/123456-audio.mp3",
+  "mediaUrl": "/artipods/61dd3471-dd98-4ff3-a5ae-27afee3fc8af/audio.mp3",
   "providerId": "assemblyai",
   "options": {
     "speakerLabels": false

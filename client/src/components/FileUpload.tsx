@@ -3,7 +3,7 @@ import { useState, useCallback } from 'react';
 import './FileUpload.scss';
 
 interface FileUploadProps {
-  onFileUploaded: (fileUrl: string, filename: string) => void;
+  onFileUploaded: (fileUrl: string, artipodId: string, filename: string) => void;
   disabled?: boolean;
   apiKey?: string;
   onAuthError?: () => void;
@@ -54,7 +54,7 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiK
       }
 
       const data = await response.json();
-      onFileUploaded(data.url, data.filename);
+      onFileUploaded(data.url, data.artipodId, data.filename);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Upload failed');
     } finally {
