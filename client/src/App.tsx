@@ -278,13 +278,8 @@ function App() {
   };
 
   const handleNewPulse = () => {
-    setMediaUrl(null);
-    setArtipodId('');
-    setMediaFilename('');
-    setTranscriptionResult(null);
-    setError(null);
-    setMenuOpen(false);
-    navigate('/', { replace: true });
+    // Full page reload to completely clear all state
+    window.location.href = '/';
   };
 
   // Auto-transcribe when file and provider are ready (first load only)
