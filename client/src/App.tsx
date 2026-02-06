@@ -46,6 +46,8 @@ function App() {
   const [splitPosition, setSplitPosition] = useState(50); // Percentage for media pane height
   const [isDragging, setIsDragging] = useState(false);
   const [savedEditorState, setSavedEditorState] = useState<SavedEditorState | null>(null);
+  const [cursorTimestampMs, setCursorTimestampMs] = useState<number | null>(null);
+  const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
   const contentRef = useRef<HTMLElement>(null);
   const hasAutoTranscribed = useRef(false);
@@ -859,14 +861,45 @@ function App() {
           )}
 
           {viewState === 'viewing' && (
-            <button
-              className="app__retranscribe-btn"
-              onClick={handleRetranscribe}
-              title="Re-transcribe (ignore cache)"
-              aria-label="Re-transcribe"
-            >
-              Re-transcribe
-            </button>
+            <>
+              <button
+                className={`app__icon-btn app__data-toggle ${viewMode === 'data' ? 'app__data-toggle--active' : ''}`}
+                onClick={() => setViewMode(viewMode === 'data' ? 'transcript' : 'data')}
+                title={viewMode === 'data' ? 'Show transcript' : 'Show Artipod Folder'}
+                aria-label={viewMode === 'data' ? 'Show transcript' : 'Show Artipod Folder'}
+              >
+                📁
+              </button>
+              {isCurrentPulseFeatured && cursorTimestampMs !== null && (
+                <button
+                  className={`app__icon-btn app__thumbnail-btn app__thumbnail-btn--${thumbnailStatus}`}
+                  onClick={async () => {
+                    if (thumbnailStatus !== 'loading') {
+                      setThumbnailStatus('loading');
+                      const success = await handleCaptureThumbnail(cursorTimestampMs);
+                      setThumbnailStatus(success ? 'success' : 'error');
+                      setTimeout(() => setThumbnailStatus('idle'), 2000);
+                    }
+                  }}
+                  disabled={thumbnailStatus === 'loading'}
+                  aria-label="Capture thumbnail at current position"
+                  title="Set this frame as demo thumbnail"
+                >
+                  {thumbnailStatus === 'loading' ? '⏳' :
+                   thumbnailStatus === 'success' ? '✅' :
+                   thumbnailStatus === 'error' ? '❌' :
+                   '📷'}
+                </button>
+              )}
+              <button
+                className="app__icon-btn app__retranscribe-btn"
+                onClick={handleRetranscribe}
+                title="Re-transcribe (ignore cache)"
+                aria-label="Re-transcribe"
+              >
+                🔄
+              </button>
+            </>
           )}
         </div>
       </header>
@@ -963,24 +996,7 @@ function App() {
           )}
 
           {viewState === 'viewing' && transcriptionResult && (
-            <>
-              <div className="app__transcript-toolbar">
-                <div className="app__view-toggles">
-                  <button
-                    className={`app__toggle ${viewMode === 'transcript' ? 'app__toggle--active' : ''}`}
-                    onClick={() => setViewMode('transcript')}
-                  >
-                    Transcript
-                  </button>
-                  <button
-                    className={`app__toggle ${viewMode === 'data' ? 'app__toggle--active' : ''}`}
-                    onClick={() => setViewMode('data')}
-                  >
-                    Data
-                  </button>
-                </div>
-              </div>
-              <TranscriptViewer
+            <TranscriptViewer
                 transcript={transcriptionResult.transcript}
                 mediaRef={mediaRef}
                 viewMode={viewMode}
@@ -993,10 +1009,8 @@ function App() {
                 initialEditedWords={savedEditorState?.editedWords}
                 initialUndoStack={savedEditorState?.undoStack}
                 onEditorStateChange={saveEditorState}
-                onCaptureThumbnail={handleCaptureThumbnail}
-                showThumbnailCapture={isCurrentPulseFeatured}
+                onCursorTimestampChange={setCursorTimestampMs}
               />
-            </>
           )}
         </div>
       </main>

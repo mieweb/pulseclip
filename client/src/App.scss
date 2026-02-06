@@ -355,6 +355,32 @@
   padding: 6px 12px;
 }
 
+.app__thumbnail-btn {
+  // Icon button styling inherited from .app__icon-btn
+  background: rgba(156, 39, 176, 0.2);
+  border-color: rgba(156, 39, 176, 0.4);
+
+  &:hover:not(:disabled) {
+    background: rgba(156, 39, 176, 0.3);
+    border-color: rgba(156, 39, 176, 0.6);
+  }
+
+  &--loading {
+    background: rgba(255, 193, 7, 0.2);
+    border-color: rgba(255, 193, 7, 0.4);
+  }
+
+  &--success {
+    background: rgba(76, 175, 80, 0.2);
+    border-color: rgba(76, 175, 80, 0.4);
+  }
+
+  &--error {
+    background: rgba(244, 67, 54, 0.2);
+    border-color: rgba(244, 67, 54, 0.4);
+  }
+}
+
 .app__view-toggles {
   display: flex;
   gap: 4px;
@@ -525,19 +551,47 @@
   flex-shrink: 0;
 }
 
-.app__retranscribe-btn {
-  padding: 6px 16px;
+.app__icon-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
   background: #2a2a4a;
   color: white;
   border: 1px solid #3a3a5a;
   border-radius: 4px;
-  font-size: 14px;
-  font-weight: 500;
+  font-size: 16px;
   cursor: pointer;
+  transition: all 0.15s ease;
   
   &:hover {
     background: #3a3a5a;
     border-color: #5a5a7a;
+  }
+  
+  &:disabled {
+    opacity: 0.7;
+    cursor: wait;
+  }
+}
+
+.app__retranscribe-btn {
+  // Icon button styling inherited from .app__icon-btn
+}
+
+.app__data-toggle {
+  // Icon button styling inherited from .app__icon-btn
+  
+  &--active {
+    background: #2196F3;
+    border-color: #2196F3;
+    
+    &:hover {
+      background: #1976D2;
+      border-color: #1976D2;
+    }
   }
 }
 

@@ -458,10 +458,8 @@ interface TranscriptViewerProps {
   initialUndoStack?: EditableWord[][];
   /** Callback when editor state changes (for persistence) */
   onEditorStateChange?: (editedWords: EditableWord[], undoStack: EditableWord[][]) => void;
-  /** Callback when user wants to capture thumbnail at a specific timestamp (in ms) */
-  onCaptureThumbnail?: (timestampMs: number) => Promise<boolean>;
-  /** Whether to show the thumbnail capture button */
-  showThumbnailCapture?: boolean;
+  /** Callback when cursor position changes (reports timestamp in ms) */
+  onCursorTimestampChange?: (timestampMs: number | null) => void;
 }
 
 interface SelectionRange {
@@ -596,11 +594,8 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   initialEditedWords,
   initialUndoStack,
   onEditorStateChange,
-  onCaptureThumbnail,
-  showThumbnailCapture = false,
+  onCursorTimestampChange,
 }) => {
-  // Thumbnail capture status: 'idle' | 'loading' | 'success' | 'error'
-  const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   
   // Track if we've initialized from saved state
   const initializedFromSaved = useRef(false);
@@ -861,6 +856,18 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     media.addEventListener('timeupdate', handleTimeUpdate);
     return () => media.removeEventListener('timeupdate', handleTimeUpdate);
   }, [editedWords, mediaRef, isPlayingSequence, hasEdits]);
+
+  // Report cursor timestamp changes to parent
+  useEffect(() => {
+    if (onCursorTimestampChange) {
+      const word = editedWords[cursorIndex];
+      if (word && !word.deleted) {
+        onCursorTimestampChange(word.word.startMs);
+      } else {
+        onCursorTimestampChange(null);
+      }
+    }
+  }, [cursorIndex, editedWords, onCursorTimestampChange]);
 
   const handleWordClick = (word: TranscriptWord, index: number, e: React.MouseEvent) => {
     debug('Click', `Word: "${word.text}" (index: ${index}, start: ${word.startMs}ms)`);
@@ -1484,30 +1491,6 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           >
             Remove Fillers
           </button>
-          {showThumbnailCapture && onCaptureThumbnail && (
-            <button
-              className={`transcript-viewer__filler-btn transcript-viewer__thumbnail-btn--${thumbnailStatus}`}
-              onClick={async () => {
-                // Use the cursor position word's start time
-                const word = editedWords[cursorIndex];
-                if (word && thumbnailStatus !== 'loading') {
-                  setThumbnailStatus('loading');
-                  const success = await onCaptureThumbnail(word.word.startMs);
-                  setThumbnailStatus(success ? 'success' : 'error');
-                  // Reset to idle after showing feedback
-                  setTimeout(() => setThumbnailStatus('idle'), 2000);
-                }
-              }}
-              disabled={thumbnailStatus === 'loading'}
-              aria-label="Capture thumbnail at current position"
-              title="Set this frame as demo thumbnail"
-            >
-              {thumbnailStatus === 'loading' ? '⏳ Saving...' :
-               thumbnailStatus === 'success' ? '✅ Saved!' :
-               thumbnailStatus === 'error' ? '❌ Failed' :
-               '📷 Thumbnail'}
-            </button>
-          )}
           <div className="transcript-viewer__meta">
             <span>{activeWordCount} words</span>
             {activeSilenceCount > 0 && (
