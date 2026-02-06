@@ -3,11 +3,18 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { FileUpload } from './components/FileUpload';
 import { MediaPlayer } from './components/MediaPlayer';
 import { TranscriptViewer } from './components/TranscriptViewer';
-import type { Provider, TranscriptionResult, FeaturedPulse } from './types';
+import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
 import './App.scss';
 
 type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
+
+/** Saved editor state from server */
+interface SavedEditorState {
+  editedWords: EditableWord[];
+  undoStack: EditableWord[][];
+  savedAt: string;
+}
 
 function App() {
   const { artipodId: urlArtipodId } = useParams<{ artipodId: string }>();
@@ -38,9 +45,11 @@ function App() {
   const [featuredThumbnail, setFeaturedThumbnail] = useState('');
   const [splitPosition, setSplitPosition] = useState(50); // Percentage for media pane height
   const [isDragging, setIsDragging] = useState(false);
+  const [savedEditorState, setSavedEditorState] = useState<SavedEditorState | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
   const contentRef = useRef<HTMLElement>(null);
   const hasAutoTranscribed = useRef(false);
+  const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Determine current view state
   const viewState: ViewState = loading
@@ -142,6 +151,76 @@ function App() {
         .finally(() => setLoading(false));
     }
   }, [urlArtipodId, mediaUrl, navigate]);
+
+  // Load saved editor state when artipod changes
+  useEffect(() => {
+    if (!artipodId) {
+      setSavedEditorState(null);
+      return;
+    }
+    
+    fetch(`/api/artipod/${artipodId}/edits`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.hasEdits && data.editedWords) {
+          console.log(`Loaded saved edits for artipod ${artipodId}: ${data.editedWords.length} words, ${data.undoStack?.length || 0} undo states`);
+          setSavedEditorState({
+            editedWords: data.editedWords,
+            undoStack: data.undoStack || [],
+            savedAt: data.savedAt,
+          });
+        } else {
+          setSavedEditorState(null);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load saved edits:', err);
+        setSavedEditorState(null);
+      });
+  }, [artipodId]);
+
+  // Save editor state (debounced)
+  const saveEditorState = useCallback((editedWords: EditableWord[], undoStack: EditableWord[][]) => {
+    if (!artipodId || !apiKey) return;
+    
+    // Clear any pending save
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    
+    // Debounce saves by 1 second
+    saveTimeoutRef.current = setTimeout(() => {
+      fetch(`/api/artipod/${artipodId}/edits`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({
+          editedWords,
+          undoStack,
+          savedAt: new Date().toISOString(),
+        }),
+      })
+        .then((res) => {
+          if (!res.ok) {
+            console.error('Failed to save edits:', res.status);
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to save edits:', err);
+        });
+    }, 1000);
+  }, [artipodId, apiKey]);
+
+  // Cleanup save timeout on unmount
+  useEffect(() => {
+    return () => {
+      if (saveTimeoutRef.current) {
+        clearTimeout(saveTimeoutRef.current);
+      }
+    };
+  }, []);
 
   // Load available providers on mount
   useEffect(() => {
@@ -280,6 +359,15 @@ function App() {
       if (!window.confirm('Are you sure you want to re-transcribe? All edits will be lost.')) {
         return;
       }
+    }
+    // Clear saved editor state when re-transcribing
+    setSavedEditorState(null);
+    // Also delete saved edits from server
+    if (artipodId && apiKey) {
+      fetch(`/api/artipod/${artipodId}/edits`, {
+        method: 'DELETE',
+        headers: { 'X-API-Key': apiKey },
+      }).catch((err) => console.error('Failed to delete saved edits:', err));
     }
     handleTranscribe(true);
   };
@@ -902,6 +990,9 @@ function App() {
                 onDataFormatChange={setDataFormat}
                 rawData={transcriptionResult.raw}
                 onHasEditsChange={setHasEdits}
+                initialEditedWords={savedEditorState?.editedWords}
+                initialUndoStack={savedEditorState?.undoStack}
+                onEditorStateChange={saveEditorState}
                 onCaptureThumbnail={handleCaptureThumbnail}
                 showThumbnailCapture={isCurrentPulseFeatured}
               />

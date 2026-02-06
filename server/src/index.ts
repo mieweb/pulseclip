@@ -4,7 +4,7 @@ import multer from 'multer';
 import { randomUUID } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync, rmSync, readdirSync } from 'fs';
+import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'fs';
 import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
 import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
@@ -195,7 +195,7 @@ function findMediaInArtipod(artipodPath: string): string | null {
   if (!existsSync(artipodPath)) return null;
   const files = readdirSync(artipodPath);
   // Find the first media file (exclude known asset files)
-  const assetFiles = ['thumbnail.png', 'thumbnail.jpg', 'transcript.json', 'beats.json'];
+  const assetFiles = ['thumbnail.png', 'thumbnail.jpg', 'transcript.json', 'beats.json', 'edits.json'];
   const mediaFile = files.find(f => !assetFiles.includes(f) && !f.startsWith('.'));
   return mediaFile || null;
 }
@@ -232,6 +232,84 @@ app.get('/api/artipod/:artipodId', (req, res) => {
     size: stats.size,
     thumbnail: thumbnailUrl,
   });
+});
+
+// Get editor state (edits and undo history) for an artipod
+app.get('/api/artipod/:artipodId/edits', (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+  
+  if (!existsSync(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+  
+  const editsPath = join(artipodPath, 'edits.json');
+  
+  if (!existsSync(editsPath)) {
+    // No edits saved yet
+    return res.json({ success: true, hasEdits: false });
+  }
+  
+  try {
+    const editsData = readFileSync(editsPath, 'utf-8');
+    const edits = JSON.parse(editsData);
+    res.json({ success: true, hasEdits: true, ...edits });
+  } catch (error) {
+    console.error('Failed to read edits:', error);
+    res.status(500).json({ error: 'Failed to read editor state' });
+  }
+});
+
+// Save editor state (protected)
+app.put('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
+  const { artipodId } = req.params;
+  const { editedWords, undoStack, savedAt } = req.body;
+  
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+  
+  if (!existsSync(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+  
+  if (!editedWords || !Array.isArray(editedWords)) {
+    return res.status(400).json({ error: 'editedWords array is required' });
+  }
+  
+  try {
+    const editsPath = join(artipodPath, 'edits.json');
+    const editsData = {
+      editedWords,
+      undoStack: undoStack || [],
+      savedAt: savedAt || new Date().toISOString(),
+    };
+    
+    writeFileSync(editsPath, JSON.stringify(editsData, null, 2));
+    console.log(`Saved edits for artipod ${artipodId}: ${editedWords.length} words, ${undoStack?.length || 0} undo states`);
+    
+    res.json({ success: true, savedAt: editsData.savedAt });
+  } catch (error) {
+    console.error('Failed to save edits:', error);
+    res.status(500).json({ error: 'Failed to save editor state' });
+  }
+});
+
+// Delete editor state (protected)
+app.delete('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+  
+  if (!existsSync(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+  
+  const editsPath = join(artipodPath, 'edits.json');
+  
+  if (existsSync(editsPath)) {
+    unlinkSync(editsPath);
+    console.log(`Deleted edits for artipod ${artipodId}`);
+  }
+  
+  res.json({ success: true });
 });
 
 // Legacy route - redirect old filename format to artipod lookup

@@ -452,6 +452,12 @@ interface TranscriptViewerProps {
   onDataFormatChange?: (format: 'yaml' | 'json') => void;
   rawData?: any;
   onHasEditsChange?: (hasEdits: boolean) => void;
+  /** Initial edited words state (from saved edits) */
+  initialEditedWords?: EditableWord[];
+  /** Initial undo stack (from saved edits) */
+  initialUndoStack?: EditableWord[][];
+  /** Callback when editor state changes (for persistence) */
+  onEditorStateChange?: (editedWords: EditableWord[], undoStack: EditableWord[][]) => void;
   /** Callback when user wants to capture thumbnail at a specific timestamp (in ms) */
   onCaptureThumbnail?: (timestampMs: number) => Promise<boolean>;
   /** Whether to show the thumbnail capture button */
@@ -587,19 +593,31 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   onDataFormatChange,
   rawData,
   onHasEditsChange,
+  initialEditedWords,
+  initialUndoStack,
+  onEditorStateChange,
   onCaptureThumbnail,
   showThumbnailCapture = false,
 }) => {
   // Thumbnail capture status: 'idle' | 'loading' | 'success' | 'error'
   const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   
-  // Edit mode state
+  // Track if we've initialized from saved state
+  const initializedFromSaved = useRef(false);
+  
+  // Edit mode state - use initial state if provided
   const [editedWords, setEditedWords] = useState<EditableWord[]>(() => 
-    initEditableWords(transcript)
+    initialEditedWords || initEditableWords(transcript)
   );
-  const [undoStack, setUndoStack] = useState<EditableWord[][]>([]);
+  const [undoStack, setUndoStack] = useState<EditableWord[][]>(initialUndoStack || []);
   const [clipboard, setClipboard] = useState<ClipboardData | null>(null);
-  const [hasEdits, setHasEdits] = useState(false);
+  const [hasEdits, setHasEdits] = useState(() => {
+    // Check if initial state has edits
+    if (initialEditedWords) {
+      return initialEditedWords.some(ew => ew.deleted || ew.inserted);
+    }
+    return false;
+  });
   
   // Cursor position: 'before' means cursor is before cursorIndex word,
   // 'after' means cursor is after the last word (only valid when cursorIndex is last word)
@@ -683,8 +701,18 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     debug('Edit', `Undo (${undoStack.length - 1} remaining)`);
   }, [undoStack, transcript.words.length]);
 
-  // Reset edited words when transcript changes
+  // Track previous transcript to detect changes
+  const prevTranscriptRef = useRef(transcript);
+
+  // Reset edited words when transcript changes (but not on initial load with saved edits)
   useEffect(() => {
+    // Skip if this is the initial render with saved edits
+    if (prevTranscriptRef.current === transcript) {
+      return;
+    }
+    prevTranscriptRef.current = transcript;
+    
+    // Transcript changed - reset to fresh state
     setEditedWords(initEditableWords(transcript));
     setUndoStack([]);
     setHasEdits(false);
@@ -692,6 +720,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     setCursorPosition('before');
     setSelection(null);
     setSelectionAnchor(null);
+    initializedFromSaved.current = false;
   }, [transcript]);
 
   // Sync cursor with active word when media is playing (not seeking)
@@ -1333,6 +1362,21 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   useEffect(() => {
     onHasEditsChange?.(hasEdits);
   }, [hasEdits, onHasEditsChange]);
+
+  // Notify parent when editor state changes (for persistence)
+  useEffect(() => {
+    // Skip the initial render if we initialized from saved state
+    if (!initializedFromSaved.current && initialEditedWords) {
+      initializedFromSaved.current = true;
+      return;
+    }
+    initializedFromSaved.current = true;
+    
+    // Only notify if there are edits to persist
+    if (hasEdits || undoStack.length > 0) {
+      onEditorStateChange?.(editedWords, undoStack);
+    }
+  }, [editedWords, undoStack, hasEdits, onEditorStateChange, initialEditedWords]);
 
   // Helper to format data as JSON or YAML
   const formatData = (data: unknown, format: 'yaml' | 'json'): string => {
