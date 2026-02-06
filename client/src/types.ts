@@ -1,5 +1,5 @@
-/** Type of transcript word - 'word' for spoken content, 'silence' for detected gaps */
-export type WordType = 'word' | 'silence';
+/** Type of transcript word - 'word' for spoken content, 'silence' for detected gaps, 'silence-newline' for longer pauses */
+export type WordType = 'word' | 'silence' | 'silence-newline';
 
 export interface TranscriptWord {
   text: string;

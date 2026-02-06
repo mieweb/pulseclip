@@ -442,6 +442,141 @@ const WordEditorModal: FC<WordEditorModalProps> = ({
   );
 };
 
+/** Props for the silence settings modal */
+interface SilenceSettingsModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  minSilenceMs: number;
+  nlSilenceMs: number;
+  onApply: (minSilenceMs: number, nlSilenceMs: number) => void;
+}
+
+/** Modal component for configuring silence detection settings */
+const SilenceSettingsModal: FC<SilenceSettingsModalProps> = ({
+  isOpen,
+  onClose,
+  minSilenceMs,
+  nlSilenceMs,
+  onApply,
+}) => {
+  const [threshold, setThreshold] = useState(minSilenceMs / 1000);
+  const [nlThreshold, setNlThreshold] = useState(nlSilenceMs / 1000);
+  const modalRef = useRef<HTMLDivElement>(null);
+
+  // Reset when modal opens
+  useEffect(() => {
+    if (isOpen) {
+      setThreshold(minSilenceMs / 1000);
+      setNlThreshold(nlSilenceMs / 1000);
+    }
+  }, [isOpen, minSilenceMs, nlSilenceMs]);
+
+  // Close on escape
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('keydown', handleKeyDown);
+      return () => document.removeEventListener('keydown', handleKeyDown);
+    }
+  }, [isOpen, onClose]);
+
+  // Click outside to close
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => document.removeEventListener('mousedown', handleClickOutside);
+    }
+  }, [isOpen, onClose]);
+
+  const handleApply = () => {
+    // Ensure nlThreshold is always >= threshold
+    const finalNlThreshold = Math.max(nlThreshold, threshold);
+    onApply(Math.round(threshold * 1000), Math.round(finalNlThreshold * 1000));
+    onClose();
+  };
+
+  // Auto-adjust newline threshold if it would be less than min threshold
+  const handleThresholdChange = (value: number) => {
+    setThreshold(value);
+    if (nlThreshold < value) {
+      setNlThreshold(value);
+    }
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="silence-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="silence-modal-title">
+      <div className="silence-modal" ref={modalRef}>
+        <div className="silence-modal__header">
+          <h3 id="silence-modal-title">Silence Settings</h3>
+          <button className="silence-modal__close" onClick={onClose} aria-label="Close modal">
+            ×
+          </button>
+        </div>
+
+        <div className="silence-modal__content">
+          <label className="silence-modal__field">
+            <span className="silence-modal__label">Minimum silence duration</span>
+            <div className="silence-modal__input-row">
+              <input
+                type="range"
+                min="0.1"
+                max="2"
+                step="0.1"
+                value={threshold}
+                onChange={(e) => handleThresholdChange(parseFloat(e.target.value))}
+                aria-label="Minimum silence duration"
+              />
+              <span className="silence-modal__value">{threshold.toFixed(1)}s</span>
+            </div>
+            <p className="silence-modal__hint">
+              Gaps shorter than this will not be shown as silences.
+            </p>
+          </label>
+
+          <label className="silence-modal__field">
+            <span className="silence-modal__label">Paragraph break threshold</span>
+            <div className="silence-modal__input-row">
+              <input
+                type="range"
+                min={threshold}
+                max="5"
+                step="0.1"
+                value={nlThreshold}
+                onChange={(e) => setNlThreshold(parseFloat(e.target.value))}
+                aria-label="Paragraph break threshold"
+              />
+              <span className="silence-modal__value">{nlThreshold.toFixed(1)}s</span>
+            </div>
+            <p className="silence-modal__hint">
+              Silences longer than this will create paragraph breaks.
+            </p>
+          </label>
+        </div>
+
+        <div className="silence-modal__footer">
+          <button className="silence-modal__cancel" onClick={onClose}>
+            Cancel
+          </button>
+          <button className="silence-modal__apply" onClick={handleApply}>
+            Apply
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+};
+
 interface TranscriptViewerProps {
   transcript: Transcript;
   mediaRef: RefObject<HTMLAudioElement | HTMLVideoElement>;
@@ -522,14 +657,22 @@ function buildPlaybackSegments(editedWords: EditableWord[]): PlaybackSegment[] {
   return segments;
 }
 
-/** Minimum silence duration in milliseconds to detect and insert */
-const MIN_SILENCE_MS = 100;
+/** Default minimum silence duration in milliseconds to detect and insert */
+const DEFAULT_MIN_SILENCE_MS = 400;
+
+/** Default threshold for "newline" silences - longer pauses that indicate paragraph breaks */
+const DEFAULT_NL_SILENCE_MS = 1500;
 
 /**
  * Detect silences between words and return a new array with silence pseudo-words inserted.
  * Silences are detected as gaps between the endMs of one word and startMs of the next.
+ * Silences >= nlSilenceMs are marked as 'silence-newline' for visual line breaks.
  */
-function insertSilences(words: TranscriptWord[]): TranscriptWord[] {
+function insertSilences(
+  words: TranscriptWord[], 
+  minSilenceMs: number = DEFAULT_MIN_SILENCE_MS,
+  nlSilenceMs: number = DEFAULT_NL_SILENCE_MS
+): TranscriptWord[] {
   if (words.length === 0) return [];
   
   const result: TranscriptWord[] = [];
@@ -538,12 +681,13 @@ function insertSilences(words: TranscriptWord[]): TranscriptWord[] {
     const word = words[i];
     
     // Check for silence before the first word (from 0ms)
-    if (i === 0 && word.startMs > MIN_SILENCE_MS) {
+    if (i === 0 && word.startMs > minSilenceMs) {
+      const isNewline = word.startMs >= nlSilenceMs;
       result.push({
         text: `[${(word.startMs / 1000).toFixed(1)}s]`,
         startMs: 0,
         endMs: word.startMs,
-        wordType: 'silence',
+        wordType: isNewline ? 'silence-newline' : 'silence',
       });
     }
     
@@ -555,12 +699,13 @@ function insertSilences(words: TranscriptWord[]): TranscriptWord[] {
       const nextWord = words[i + 1];
       const gapMs = nextWord.startMs - word.endMs;
       
-      if (gapMs >= MIN_SILENCE_MS) {
+      if (gapMs >= minSilenceMs) {
+        const isNewline = gapMs >= nlSilenceMs;
         result.push({
           text: `[${(gapMs / 1000).toFixed(1)}s]`,
           startMs: word.endMs,
           endMs: nextWord.startMs,
-          wordType: 'silence',
+          wordType: isNewline ? 'silence-newline' : 'silence',
         });
       }
     }
@@ -570,9 +715,13 @@ function insertSilences(words: TranscriptWord[]): TranscriptWord[] {
 }
 
 /** Initialize editable words from transcript, inserting detected silences */
-function initEditableWords(transcript: Transcript): EditableWord[] {
+function initEditableWords(
+  transcript: Transcript, 
+  minSilenceMs: number = DEFAULT_MIN_SILENCE_MS,
+  nlSilenceMs: number = DEFAULT_NL_SILENCE_MS
+): EditableWord[] {
   // First insert silences between the original words
-  const wordsWithSilences = insertSilences(transcript.words);
+  const wordsWithSilences = insertSilences(transcript.words, minSilenceMs, nlSilenceMs);
   
   return wordsWithSilences.map((word, index) => ({
     originalIndex: index,
@@ -633,6 +782,9 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [isPlayingSequence, setIsPlayingSequence] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
   const [showFillerModal, setShowFillerModal] = useState(false);
+  const [showSilenceModal, setShowSilenceModal] = useState(false);
+  const [minSilenceMs, setMinSilenceMs] = useState(DEFAULT_MIN_SILENCE_MS);
+  const [nlSilenceMs, setNlSilenceMs] = useState(DEFAULT_NL_SILENCE_MS);
   const [editorWordIndex, setEditorWordIndex] = useState<number | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const userSetCursor = useRef<number | null>(null);
@@ -707,8 +859,8 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     }
     prevTranscriptRef.current = transcript;
     
-    // Transcript changed - reset to fresh state
-    setEditedWords(initEditableWords(transcript));
+    // Transcript changed - reset to fresh state (use current silence thresholds)
+    setEditedWords(initEditableWords(transcript, minSilenceMs, nlSilenceMs));
     setUndoStack([]);
     setHasEdits(false);
     setCursorIndex(0);
@@ -716,7 +868,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     setSelection(null);
     setSelectionAnchor(null);
     initializedFromSaved.current = false;
-  }, [transcript]);
+  }, [transcript, minSilenceMs, nlSilenceMs]);
 
   // Sync cursor with active word when media is playing (not seeking)
   useEffect(() => {
@@ -1365,6 +1517,38 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     }
   }, [editedWords, pushUndo]);
 
+  // Handle applying new silence thresholds
+  const handleSilenceThresholdChange = useCallback((newMinSilenceMs: number, newNlSilenceMs: number) => {
+    setMinSilenceMs(newMinSilenceMs);
+    setNlSilenceMs(newNlSilenceMs);
+    // Rebuild the editable words with new silence detection
+    // Preserve deleted status for actual words (not silences)
+    const wordDeletedStatus = new Map<number, boolean>();
+    editedWords.forEach(ew => {
+      if (ew.word.wordType !== 'silence' && ew.word.wordType !== 'silence-newline' && ew.originalIndex >= 0) {
+        // Map original word index to deleted status
+        wordDeletedStatus.set(ew.originalIndex, ew.deleted);
+      }
+    });
+    
+    // Re-initialize with new thresholds
+    const newEditedWords = initEditableWords(transcript, newMinSilenceMs, newNlSilenceMs);
+    
+    // Restore deleted status for words
+    let wordIdx = 0;
+    const restoredWords = newEditedWords.map(ew => {
+      if (ew.word.wordType !== 'silence' && ew.word.wordType !== 'silence-newline') {
+        const wasDeleted = wordDeletedStatus.get(wordIdx) ?? false;
+        wordIdx++;
+        return { ...ew, deleted: wasDeleted };
+      }
+      return ew;
+    });
+    
+    setEditedWords(restoredWords);
+    debug('Silence', `Changed thresholds: min=${newMinSilenceMs}ms, newline=${newNlSilenceMs}ms`);
+  }, [editedWords, transcript]);
+
   // Notify parent when hasEdits changes
   useEffect(() => {
     onHasEditsChange?.(hasEdits);
@@ -1495,9 +1679,22 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           <div className="transcript-viewer__meta">
             <span>{activeWordCount} words</span>
             {activeSilenceCount > 0 && (
-              <span className="transcript-viewer__silence-count">
+              <button
+                className="transcript-viewer__silence-count"
+                onClick={() => setShowSilenceModal(true)}
+                title={`Click to configure silence detection (currently ≥${(minSilenceMs / 1000).toFixed(1)}s)`}
+              >
                 {activeSilenceCount} silences
-              </span>
+              </button>
+            )}
+            {activeSilenceCount === 0 && (
+              <button
+                className="transcript-viewer__silence-count transcript-viewer__silence-count--empty"
+                onClick={() => setShowSilenceModal(true)}
+                title={`No silences detected (threshold: ${(minSilenceMs / 1000).toFixed(1)}s). Click to configure.`}
+              >
+                0 silences
+              </button>
             )}
             {(deletedWordCount > 0 || deletedSilenceCount > 0) && (
               <span className="transcript-viewer__deleted-count">
@@ -1517,6 +1714,14 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         onClose={() => setShowFillerModal(false)}
         onApply={handleRemoveFillers}
         matchingCounts={getFillerMatchCounts()}
+      />
+
+      <SilenceSettingsModal
+        isOpen={showSilenceModal}
+        onClose={() => setShowSilenceModal(false)}
+        minSilenceMs={minSilenceMs}
+        nlSilenceMs={nlSilenceMs}
+        onApply={handleSilenceThresholdChange}
       />
 
       <WordEditorModal
@@ -1604,7 +1809,8 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           const isSelected = isWordSelected(index);
           const isDeleted = ew.deleted;
           const isInserted = ew.inserted;
-          const isSilence = ew.word.wordType === 'silence';
+          const isSilence = ew.word.wordType === 'silence' || ew.word.wordType === 'silence-newline';
+          const isSilenceNewline = ew.word.wordType === 'silence-newline';
           const isAnchor = index === doubleClickAnchor;
           const showCursorBefore = isCursor && cursorPosition === 'before';
           const showCursorAfter = isCursor && cursorPosition === 'after' && index === editedWords.length - 1;
@@ -1621,6 +1827,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               }${isDeleted ? ' transcript-viewer__word--deleted' : ''
               }${isInserted ? ' transcript-viewer__word--inserted' : ''
               }${isSilence ? ' transcript-viewer__word--silence' : ''
+              }${isSilenceNewline ? ' transcript-viewer__word--silence-newline' : ''
               }${isAnchor ? ' transcript-viewer__word--anchor' : ''
               }${showCursorBefore ? ' transcript-viewer__word--cursor-before' : ''
               }${showCursorAfter ? ' transcript-viewer__word--cursor-after' : ''}`}

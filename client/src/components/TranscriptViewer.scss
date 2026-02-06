@@ -91,6 +91,22 @@
     background: rgba(128, 128, 128, 0.2) !important;
     color: #999 !important;
     font-style: italic;
+    border: 1px solid transparent;
+    padding: 2px 6px;
+    border-radius: 4px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all 0.15s;
+
+    &:hover {
+      background: rgba(128, 128, 128, 0.35) !important;
+      border-color: rgba(128, 128, 128, 0.5);
+      color: #bbb !important;
+    }
+
+    &--empty {
+      opacity: 0.6;
+    }
   }
 
   &__deleted-count {
@@ -351,6 +367,27 @@
         color: #f44336;
         background: rgba(244, 67, 54, 0.08);
         border-color: rgba(244, 67, 54, 0.3);
+      }
+    }
+
+    &--silence-newline {
+      // Longer silences that act as paragraph breaks - display: block forces newline
+      display: block;
+      margin-top: 6px;
+      padding: 2px 6px;
+      border: none;
+      background: none;
+      color: #ba68c8;
+      
+      &:hover {
+        background: rgba(156, 39, 176, 0.15);
+        color: #ce93d8;
+      }
+
+      &.transcript-viewer__word--deleted {
+        color: #f44336;
+        background: none;
+        border: none;
       }
     }
 
@@ -904,6 +941,179 @@
     &:disabled {
       background: #666;
       cursor: not-allowed;
+    }
+  }
+}
+
+// Silence Settings Modal
+.silence-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  backdrop-filter: blur(2px);
+}
+
+.silence-modal {
+  background: #1e1e1e;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  width: 360px;
+  max-width: 90vw;
+  display: flex;
+  flex-direction: column;
+  box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+
+  &__header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 16px 20px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+
+    h3 {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      color: white;
+    }
+  }
+
+  &__close {
+    background: none;
+    border: none;
+    color: #888;
+    font-size: 24px;
+    cursor: pointer;
+    padding: 0;
+    line-height: 1;
+    transition: color 0.15s;
+
+    &:hover {
+      color: white;
+    }
+  }
+
+  &__content {
+    padding: 20px;
+  }
+
+  &__field {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  &__label {
+    font-size: 14px;
+    font-weight: 500;
+    color: #ddd;
+  }
+
+  &__input-row {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+
+    input[type="range"] {
+      flex: 1;
+      height: 6px;
+      -webkit-appearance: none;
+      appearance: none;
+      background: rgba(255, 255, 255, 0.2);
+      border-radius: 3px;
+      outline: none;
+
+      &::-webkit-slider-thumb {
+        -webkit-appearance: none;
+        appearance: none;
+        width: 18px;
+        height: 18px;
+        background: #2196F3;
+        border-radius: 50%;
+        cursor: pointer;
+        transition: background 0.15s;
+
+        &:hover {
+          background: #1976D2;
+        }
+      }
+
+      &::-moz-range-thumb {
+        width: 18px;
+        height: 18px;
+        background: #2196F3;
+        border-radius: 50%;
+        cursor: pointer;
+        border: none;
+        transition: background 0.15s;
+
+        &:hover {
+          background: #1976D2;
+        }
+      }
+    }
+  }
+
+  &__value {
+    font-size: 16px;
+    font-weight: 600;
+    color: #2196F3;
+    min-width: 40px;
+    text-align: right;
+  }
+
+  &__hint {
+    font-size: 12px;
+    color: #888;
+    line-height: 1.4;
+    margin: 4px 0 0 0;
+  }
+
+  &__footer {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    padding: 16px 20px;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  &__cancel {
+    padding: 8px 16px;
+    background: rgba(255, 255, 255, 0.1);
+    color: #aaa;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.15);
+      color: white;
+    }
+  }
+
+  &__apply {
+    padding: 8px 16px;
+    background: #2196F3;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+
+    &:hover {
+      background: #1976D2;
     }
   }
 }
