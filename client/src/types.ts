@@ -75,3 +75,20 @@ export interface FeaturedPulse {
   thumbnail?: string;
   addedAt: string;
 }
+
+/** Available playback speed multipliers */
+export type PlaybackSpeed = 0.5 | 0.75 | 1 | 1.25 | 1.5 | 1.75 | 2;
+
+/** Array of all available speed options for dropdowns */
+export const PLAYBACK_SPEEDS: PlaybackSpeed[] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
+
+/**
+ * A speed marker applied to a word in the transcript.
+ * The speed applies from this word until the next speed marker or end of transcript.
+ */
+export interface SpeedMarker {
+  /** Index in the editedWords array where the speed marker is placed */
+  wordIndex: number;
+  /** The playback speed multiplier */
+  speed: PlaybackSpeed;
+}

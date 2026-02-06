@@ -73,6 +73,56 @@
       cursor: not-allowed;
     }
   }
+
+  &__speed-controls {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 2px 8px;
+    background: rgba(255, 193, 7, 0.1);
+    border: 1px solid rgba(255, 193, 7, 0.3);
+    border-radius: 4px;
+  }
+
+  &__speed-label {
+    font-size: 11px;
+    color: #ffc107;
+    font-weight: 500;
+  }
+
+  &__speed-select {
+    padding: 2px 6px;
+    font-size: 11px;
+    background: rgba(0, 0, 0, 0.3);
+    color: #ffc107;
+    border: 1px solid rgba(255, 193, 7, 0.4);
+    border-radius: 3px;
+    cursor: pointer;
+    outline: none;
+
+    &:hover {
+      background: rgba(0, 0, 0, 0.4);
+      border-color: rgba(255, 193, 7, 0.6);
+    }
+
+    &:focus {
+      border-color: #ffc107;
+    }
+
+    option {
+      background: #1e1e1e;
+      color: #fff;
+    }
+  }
+
+  &__speed-markers-count {
+    font-size: 10px;
+    color: #ffb300;
+    padding: 1px 4px;
+    background: rgba(255, 179, 0, 0.15);
+    border-radius: 3px;
+    cursor: help;
+  }
   
   &__meta {
     display: flex;
@@ -402,6 +452,37 @@
         background: rgba(255, 193, 7, 0.5);
         border-color: #ffca28;
       }
+    }
+
+    &--speed-marker {
+      position: relative;
+      border-left: 3px solid #ff5722;
+      padding-left: 6px;
+      margin-left: 2px;
+      
+      &:hover {
+        border-left-color: #ff7043;
+      }
+    }
+  }
+
+  &__speed-indicator {
+    display: inline-block;
+    font-size: 9px;
+    font-weight: 600;
+    color: #ff5722;
+    background: rgba(255, 87, 34, 0.2);
+    border: 1px solid rgba(255, 87, 34, 0.5);
+    border-radius: 3px;
+    padding: 0 3px;
+    margin-right: 3px;
+    vertical-align: middle;
+    line-height: 1.4;
+    cursor: pointer;
+
+    &:hover {
+      background: rgba(255, 87, 34, 0.3);
+      border-color: rgba(255, 87, 34, 0.7);
     }
   }
 
@@ -1114,6 +1195,91 @@
 
     &:hover {
       background: #1976D2;
+    }
+  }
+}
+
+// Speed Marker Menu (context menu popup)
+.speed-marker-menu {
+  position: fixed;
+  background: #1e1e1e;
+  border-radius: 8px;
+  border: 1px solid rgba(255, 87, 34, 0.4);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
+  z-index: 1001;
+  min-width: 140px;
+  overflow: hidden;
+
+  &__header {
+    padding: 10px 14px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #ff5722;
+    background: rgba(255, 87, 34, 0.1);
+    border-bottom: 1px solid rgba(255, 87, 34, 0.2);
+  }
+
+  &__options {
+    display: flex;
+    flex-direction: column;
+    padding: 6px 0;
+  }
+
+  &__option {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 8px 14px;
+    font-size: 13px;
+    color: #ddd;
+    background: none;
+    border: none;
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: left;
+
+    &:hover {
+      background: rgba(255, 87, 34, 0.15);
+      color: #fff;
+    }
+
+    &--active {
+      background: rgba(255, 87, 34, 0.25);
+      color: #ff5722;
+      font-weight: 500;
+
+      &:hover {
+        background: rgba(255, 87, 34, 0.35);
+      }
+    }
+
+    &--default {
+      color: #888;
+    }
+  }
+
+  &__default-badge {
+    font-size: 10px;
+    color: #666;
+    font-weight: 400;
+    margin-left: 8px;
+  }
+
+  &__remove {
+    padding: 10px 14px;
+    font-size: 12px;
+    color: #f44336;
+    background: rgba(244, 67, 54, 0.1);
+    border: none;
+    border-top: 1px solid rgba(255, 255, 255, 0.1);
+    cursor: pointer;
+    transition: all 0.15s;
+    text-align: center;
+    width: 100%;
+
+    &:hover {
+      background: rgba(244, 67, 54, 0.2);
+      color: #ef5350;
     }
   }
 }

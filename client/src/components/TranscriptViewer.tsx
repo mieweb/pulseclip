@@ -1,6 +1,7 @@
 import type { FC, RefObject } from 'react';
 import { useEffect, useState, useCallback, useRef } from 'react';
-import type { Transcript, TranscriptWord, EditableWord, PlaybackSegment } from '../types';
+import type { Transcript, TranscriptWord, EditableWord, PlaybackSegment, PlaybackSpeed, SpeedMarker } from '../types';
+import { PLAYBACK_SPEEDS } from '../types';
 import { debug } from '../debug';
 import './TranscriptViewer.scss';
 
@@ -577,6 +578,97 @@ const SilenceSettingsModal: FC<SilenceSettingsModalProps> = ({
   );
 };
 
+/** Props for the speed marker menu */
+interface SpeedMarkerMenuProps {
+  isOpen: boolean;
+  position: { x: number; y: number } | null;
+  wordIndex: number | null;
+  currentMarker: SpeedMarker | undefined;
+  defaultSpeed: PlaybackSpeed;
+  onSetSpeed: (speed: PlaybackSpeed) => void;
+  onRemoveMarker: () => void;
+  onClose: () => void;
+}
+
+/** Popup menu for setting speed markers on a word */
+const SpeedMarkerMenu: FC<SpeedMarkerMenuProps> = ({
+  isOpen,
+  position,
+  currentMarker,
+  defaultSpeed,
+  onSetSpeed,
+  onRemoveMarker,
+  onClose,
+}) => {
+  const menuRef = useRef<HTMLDivElement>(null);
+
+  // Close on escape or click outside
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') onClose();
+    };
+    const handleClickOutside = (e: MouseEvent) => {
+      if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    if (isOpen) {
+      document.addEventListener('keydown', handleKeyDown);
+      document.addEventListener('mousedown', handleClickOutside);
+      return () => {
+        document.removeEventListener('keydown', handleKeyDown);
+        document.removeEventListener('mousedown', handleClickOutside);
+      };
+    }
+  }, [isOpen, onClose]);
+
+  if (!isOpen || !position) return null;
+
+  return (
+    <div
+      className="speed-marker-menu"
+      ref={menuRef}
+      style={{ left: position.x, top: position.y }}
+      role="menu"
+      aria-label="Set speed marker"
+    >
+      <div className="speed-marker-menu__header">
+        Set Speed Marker
+      </div>
+      <div className="speed-marker-menu__options">
+        {PLAYBACK_SPEEDS.map(speed => (
+          <button
+            key={speed}
+            className={`speed-marker-menu__option${
+              currentMarker?.speed === speed ? ' speed-marker-menu__option--active' : ''
+            }${speed === defaultSpeed && !currentMarker ? ' speed-marker-menu__option--default' : ''}`}
+            onClick={() => {
+              onSetSpeed(speed);
+              onClose();
+            }}
+            role="menuitem"
+          >
+            {speed}x
+            {speed === defaultSpeed && !currentMarker && <span className="speed-marker-menu__default-badge">default</span>}
+          </button>
+        ))}
+      </div>
+      {currentMarker && (
+        <button
+          className="speed-marker-menu__remove"
+          onClick={() => {
+            onRemoveMarker();
+            onClose();
+          }}
+          role="menuitem"
+        >
+          Remove Marker
+        </button>
+      )}
+    </div>
+  );
+};
+
 interface TranscriptViewerProps {
   transcript: Transcript;
   mediaRef: RefObject<HTMLAudioElement | HTMLVideoElement>;
@@ -655,6 +747,31 @@ function buildPlaybackSegments(editedWords: EditableWord[]): PlaybackSegment[] {
   }
 
   return segments;
+}
+
+/**
+ * Get the effective playback speed at a given word index.
+ * Finds the most recent speed marker at or before the word index,
+ * or returns the default speed if no marker applies.
+ */
+function getSpeedAtIndex(
+  wordIndex: number,
+  speedMarkers: SpeedMarker[],
+  defaultSpeed: PlaybackSpeed
+): PlaybackSpeed {
+  // Sort markers by word index (should already be sorted, but be safe)
+  const sortedMarkers = [...speedMarkers].sort((a, b) => a.wordIndex - b.wordIndex);
+  
+  // Find the last marker at or before this word index
+  let effectiveSpeed = defaultSpeed;
+  for (const marker of sortedMarkers) {
+    if (marker.wordIndex <= wordIndex) {
+      effectiveSpeed = marker.speed;
+    } else {
+      break;
+    }
+  }
+  return effectiveSpeed;
 }
 
 /** Default minimum silence duration in milliseconds to detect and insert */
@@ -786,6 +903,11 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [minSilenceMs, setMinSilenceMs] = useState(DEFAULT_MIN_SILENCE_MS);
   const [nlSilenceMs, setNlSilenceMs] = useState(DEFAULT_NL_SILENCE_MS);
   const [editorWordIndex, setEditorWordIndex] = useState<number | null>(null);
+  // Speed settings
+  const [defaultSpeed, setDefaultSpeed] = useState<PlaybackSpeed>(1);
+  const [speedMarkers, setSpeedMarkers] = useState<SpeedMarker[]>([]);
+  const [speedMenuWordIndex, setSpeedMenuWordIndex] = useState<number | null>(null);
+  const [speedMenuPosition, setSpeedMenuPosition] = useState<{ x: number; y: number } | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const userSetCursor = useRef<number | null>(null);
   const isDragging = useRef<boolean>(false);
@@ -890,6 +1012,26 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       contentRef.current.focus();
     }
   }, [viewMode, transcript]);
+
+  // Apply default speed when it changes (and no markers override it)
+  useEffect(() => {
+    const media = mediaRef.current;
+    if (!media) return;
+    
+    // Set initial playback rate based on current position
+    const timeMs = media.currentTime * 1000;
+    const currentWordIndex = editedWords.findIndex(
+      (ew) => !ew.deleted && timeMs >= ew.word.startMs && timeMs < ew.word.endMs
+    );
+    const targetSpeed = currentWordIndex >= 0 
+      ? getSpeedAtIndex(currentWordIndex, speedMarkers, defaultSpeed)
+      : defaultSpeed;
+    
+    if (media.playbackRate !== targetSpeed) {
+      debug('Speed', `Setting playback rate to ${targetSpeed}x (default: ${defaultSpeed}x)`);
+      media.playbackRate = targetSpeed;
+    }
+  }, [defaultSpeed, speedMarkers, mediaRef, editedWords]);
 
   // Track seeking state
   useEffect(() => {
@@ -1001,13 +1143,22 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       if (editedIndex !== activeWordIndex) {
         const ew = editedIndex >= 0 ? editedWords[editedIndex] : null;
         debug('Playback', `Active word: ${ew?.word.text ?? 'none'} (index: ${editedIndex}, time: ${timeMs.toFixed(0)}ms)`);
+        
+        // Update playback rate based on speed markers when word changes
+        if (editedIndex >= 0) {
+          const targetSpeed = getSpeedAtIndex(editedIndex, speedMarkers, defaultSpeed);
+          if (media.playbackRate !== targetSpeed) {
+            debug('Speed', `Changing playback rate to ${targetSpeed}x at word index ${editedIndex}`);
+            media.playbackRate = targetSpeed;
+          }
+        }
       }
       setActiveWordIndex(editedIndex >= 0 ? editedIndex : null);
     };
 
     media.addEventListener('timeupdate', handleTimeUpdate);
     return () => media.removeEventListener('timeupdate', handleTimeUpdate);
-  }, [editedWords, mediaRef, isPlayingSequence, hasEdits]);
+  }, [editedWords, mediaRef, isPlayingSequence, hasEdits, speedMarkers, defaultSpeed]);
 
   // Report cursor timestamp changes to parent
   useEffect(() => {
@@ -1154,6 +1305,46 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       setTimeout(() => contentRef.current?.focus(), 0);
     }
   }, [editorWordIndex, toggleWordDeleted]);
+
+  // Get the speed marker at a specific word index (if any)
+  const getSpeedMarkerAtIndex = useCallback((wordIndex: number): SpeedMarker | undefined => {
+    return speedMarkers.find(m => m.wordIndex === wordIndex);
+  }, [speedMarkers]);
+
+  // Toggle a speed marker at a word index
+  const toggleSpeedMarker = useCallback((wordIndex: number, speed: PlaybackSpeed) => {
+    setSpeedMarkers(prev => {
+      const existingIdx = prev.findIndex(m => m.wordIndex === wordIndex);
+      if (existingIdx >= 0) {
+        // If marker exists with same speed, remove it
+        if (prev[existingIdx].speed === speed) {
+          debug('Speed', `Removed speed marker at index ${wordIndex}`);
+          return prev.filter((_, i) => i !== existingIdx);
+        }
+        // If marker exists with different speed, update it
+        debug('Speed', `Updated speed marker at index ${wordIndex} to ${speed}x`);
+        const updated = [...prev];
+        updated[existingIdx] = { wordIndex, speed };
+        return updated;
+      }
+      // Add new marker
+      debug('Speed', `Added speed marker ${speed}x at index ${wordIndex}`);
+      return [...prev, { wordIndex, speed }].sort((a, b) => a.wordIndex - b.wordIndex);
+    });
+    setHasEdits(true);
+  }, []);
+
+  // Remove a speed marker at a word index
+  const removeSpeedMarker = useCallback((wordIndex: number) => {
+    setSpeedMarkers(prev => {
+      const filtered = prev.filter(m => m.wordIndex !== wordIndex);
+      if (filtered.length !== prev.length) {
+        debug('Speed', `Removed speed marker at index ${wordIndex}`);
+        setHasEdits(true);
+      }
+      return filtered;
+    });
+  }, []);
 
   const handleWordDoubleClick = (index: number, e: React.MouseEvent) => {
     e.preventDefault();
@@ -1476,10 +1667,14 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const deletedWordCount = editedWords.filter(ew => ew.deleted && ew.word.wordType !== 'silence').length;
   const deletedSilenceCount = editedWords.filter(ew => ew.deleted && ew.word.wordType === 'silence').length;
   
-  // Calculate edited duration (sum of non-deleted words/silences)
-  const editedDurationMs = editedWords
-    .filter(ew => !ew.deleted)
-    .reduce((sum, ew) => sum + (ew.word.endMs - ew.word.startMs), 0);
+  // Calculate edited duration (sum of non-deleted words/silences, adjusted for speed markers)
+  const editedDurationMs = editedWords.reduce((sum, ew, index) => {
+    if (ew.deleted) return sum;
+    const wordDuration = ew.word.endMs - ew.word.startMs;
+    const speed = getSpeedAtIndex(index, speedMarkers, defaultSpeed);
+    // Duration is divided by speed (2x speed = half the time)
+    return sum + (wordDuration / speed);
+  }, 0);
 
   // Format duration: seconds only if <90s, min:sec if <60min, hour:min:sec otherwise
   const formatDuration = (ms: number): string => {
@@ -1688,6 +1883,32 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       <div className="transcript-viewer__header">
         <h3>{hasEdits && <span className="transcript-viewer__edited-badge">Edited</span>}</h3>
         <div className="transcript-viewer__header-actions">
+          <div className="transcript-viewer__speed-controls">
+            <label className="transcript-viewer__speed-label" htmlFor="default-speed">
+              Speed:
+            </label>
+            <select
+              id="default-speed"
+              className="transcript-viewer__speed-select"
+              value={defaultSpeed}
+              onChange={(e) => setDefaultSpeed(parseFloat(e.target.value) as PlaybackSpeed)}
+              aria-label="Default playback speed"
+            >
+              {PLAYBACK_SPEEDS.map(speed => (
+                <option key={speed} value={speed}>
+                  {speed}x
+                </option>
+              ))}
+            </select>
+            {speedMarkers.length > 0 && (
+              <span 
+                className="transcript-viewer__speed-markers-count"
+                title={`${speedMarkers.length} speed marker(s) set. Right-click on a word to add/remove speed markers.`}
+              >
+                {speedMarkers.length} marker{speedMarkers.length !== 1 ? 's' : ''}
+              </span>
+            )}
+          </div>
           <button
             className="transcript-viewer__filler-btn"
             onClick={() => setShowFillerModal(true)}
@@ -1755,6 +1976,28 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         onSave={handleEditorSave}
         onSplitSilence={handleSplitSilence}
         onDelete={handleEditorDelete}
+      />
+
+      <SpeedMarkerMenu
+        isOpen={speedMenuWordIndex !== null}
+        position={speedMenuPosition}
+        wordIndex={speedMenuWordIndex}
+        currentMarker={speedMenuWordIndex !== null ? getSpeedMarkerAtIndex(speedMenuWordIndex) : undefined}
+        defaultSpeed={defaultSpeed}
+        onSetSpeed={(speed) => {
+          if (speedMenuWordIndex !== null) {
+            toggleSpeedMarker(speedMenuWordIndex, speed);
+          }
+        }}
+        onRemoveMarker={() => {
+          if (speedMenuWordIndex !== null) {
+            removeSpeedMarker(speedMenuWordIndex);
+          }
+        }}
+        onClose={() => {
+          setSpeedMenuWordIndex(null);
+          setSpeedMenuPosition(null);
+        }}
       />
 
       {(hasEdits || doubleClickAnchor !== null || selection !== null) && (
@@ -1834,6 +2077,17 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           const isAnchor = index === doubleClickAnchor;
           const showCursorBefore = isCursor && cursorPosition === 'before';
           const showCursorAfter = isCursor && cursorPosition === 'after' && index === editedWords.length - 1;
+          const speedMarker = getSpeedMarkerAtIndex(index);
+          const hasSpeedMarker = !!speedMarker;
+          
+          // Calculate displayed text - for silences, adjust duration based on effective speed
+          const effectiveSpeed = getSpeedAtIndex(index, speedMarkers, defaultSpeed);
+          let displayText = ew.word.text;
+          if (isSilence && effectiveSpeed !== 1) {
+            const originalDurationMs = ew.word.endMs - ew.word.startMs;
+            const adjustedDurationSec = (originalDurationMs / effectiveSpeed) / 1000;
+            displayText = `[${adjustedDurationSec.toFixed(1)}s]`;
+          }
           
           return (
             <span
@@ -1850,22 +2104,57 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               }${isSilenceNewline ? ' transcript-viewer__word--silence-newline' : ''
               }${isAnchor ? ' transcript-viewer__word--anchor' : ''
               }${showCursorBefore ? ' transcript-viewer__word--cursor-before' : ''
-              }${showCursorAfter ? ' transcript-viewer__word--cursor-after' : ''}`}
+              }${showCursorAfter ? ' transcript-viewer__word--cursor-after' : ''
+              }${hasSpeedMarker ? ' transcript-viewer__word--speed-marker' : ''}`}
               onClick={(e) => handleWordClick(ew.word, index, e)}
               onDoubleClick={(e) => handleWordDoubleClick(index, e)}
               onMouseDown={(e) => handleWordMouseDown(index, e)}
               onMouseEnter={() => handleWordMouseEnter(index)}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                // Show speed marker popup - position near the word but within viewport
+                const rect = e.currentTarget.getBoundingClientRect();
+                const menuHeight = 280; // Approximate height of the speed menu
+                const menuWidth = 150;  // Approximate width of the speed menu
+                
+                // Calculate position, clamping to viewport
+                let x = rect.left;
+                let y = rect.bottom + 4;
+                
+                // Ensure menu doesn't go off right edge
+                if (x + menuWidth > window.innerWidth) {
+                  x = window.innerWidth - menuWidth - 8;
+                }
+                
+                // Ensure menu doesn't go off bottom edge - show above if needed
+                if (y + menuHeight > window.innerHeight) {
+                  y = rect.top - menuHeight - 4;
+                  // If still off screen (top), just clamp to top
+                  if (y < 0) {
+                    y = 8;
+                  }
+                }
+                
+                setSpeedMenuPosition({ x, y });
+                setSpeedMenuWordIndex(index);
+              }}
               role="option"
               aria-selected={isSelected || isCursor}
               title={`${ew.word.startMs}ms - ${ew.word.endMs}ms${
                 ew.word.confidence ? ` (${Math.round(ew.word.confidence * 100)}%)` : ''
-              }${isSilence ? ` [SILENCE: ${((ew.word.endMs - ew.word.startMs) / 1000).toFixed(1)}s]` : ''
+              }${isSilence ? ` [SILENCE: ${((ew.word.endMs - ew.word.startMs) / 1000).toFixed(1)}s${effectiveSpeed !== 1 ? ` → ${((ew.word.endMs - ew.word.startMs) / effectiveSpeed / 1000).toFixed(1)}s @ ${effectiveSpeed}x` : ''}]` : ''
               }${isDeleted ? ' [DELETED]' : ''
               }${isInserted ? ' [INSERTED]' : ''
+              }${hasSpeedMarker ? ` [SPEED: ${speedMarker.speed}x]` : ''
               }${isAnchor ? ' [ANCHOR - click another word to select range, double-click to clear]' : ''
-              }${!isAnchor && !isDeleted ? ' (double-click to set anchor)' : ''}`}
+              }${!isAnchor && !isDeleted ? ' (right-click to set speed marker)' : ''}`}
             >
-              {ew.word.text}{' '}
+              {hasSpeedMarker && (
+                <span className="transcript-viewer__speed-indicator" title={`Speed: ${speedMarker.speed}x from here`}>
+                  {speedMarker.speed}x
+                </span>
+              )}
+              {displayText}{' '}
             </span>
           );
         })}
