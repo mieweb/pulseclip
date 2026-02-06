@@ -250,12 +250,17 @@
 
 // Split view - main working layout
 .app--split {
-  height: 100vh;
+  height: 100vh; // Fallback
+  height: 100dvh; // Dynamic viewport height for mobile browsers
   max-height: 100vh;
+  max-height: 100dvh;
   display: flex;
   flex-direction: column;
   background: #0f0f1a;
   overflow: hidden;
+  touch-action: none; // Prevent page scroll on touch devices
+  overscroll-behavior: none;
+  position: relative; // Ensure children position correctly
 }
 
 .app__toolbar {
@@ -478,6 +483,9 @@
   align-items: center;
   justify-content: center;
   transition: background-color 0.2s;
+  touch-action: none; // Prevent scroll on touch devices
+  -webkit-user-select: none;
+  user-select: none;
 
   &:hover,
   &:active {

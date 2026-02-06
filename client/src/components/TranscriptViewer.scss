@@ -220,6 +220,8 @@
     word-wrap: break-word;
     overflow-wrap: break-word;
     user-select: none; // Prevent native text selection for drag-to-select
+    touch-action: pan-y; // Allow vertical scrolling on touch devices
+    overscroll-behavior: contain; // Prevent scroll chaining to parent
     
     &:focus {
       outline: none;

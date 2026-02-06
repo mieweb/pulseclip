@@ -51,8 +51,14 @@ function App() {
     ? 'ready'
     : 'upload';
 
-  // Handle split bar drag
+  // Handle split bar drag (mouse)
   const handleSplitMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  // Handle split bar drag (touch)
+  const handleSplitTouchStart = useCallback((e: React.TouchEvent) => {
     e.preventDefault();
     setIsDragging(true);
   }, []);
@@ -68,18 +74,49 @@ function App() {
       setSplitPosition(Math.min(80, Math.max(20, newPosition)));
     };
 
+    const handleTouchMove = (e: TouchEvent) => {
+      e.preventDefault(); // Prevent page scroll on mobile
+      if (!contentRef.current || e.touches.length === 0) return;
+      const rect = contentRef.current.getBoundingClientRect();
+      const touch = e.touches[0];
+      const newPosition = ((touch.clientY - rect.top) / rect.height) * 100;
+      // Clamp between 20% and 80%
+      setSplitPosition(Math.min(80, Math.max(20, newPosition)));
+    };
+
     const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    const handleTouchEnd = () => {
       setIsDragging(false);
     };
 
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
+    document.addEventListener('touchmove', handleTouchMove, { passive: false });
+    document.addEventListener('touchend', handleTouchEnd);
 
     return () => {
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
+      document.removeEventListener('touchmove', handleTouchMove);
+      document.removeEventListener('touchend', handleTouchEnd);
     };
   }, [isDragging]);
+
+  // Add/remove split-view-active class on html element to prevent page scroll on mobile
+  useEffect(() => {
+    const isSplitView = viewState !== 'upload';
+    if (isSplitView) {
+      document.documentElement.classList.add('split-view-active');
+    } else {
+      document.documentElement.classList.remove('split-view-active');
+    }
+    return () => {
+      document.documentElement.classList.remove('split-view-active');
+    };
+  }, [viewState]);
 
   // Load artipod from URL parameter on mount
   useEffect(() => {
@@ -799,6 +836,7 @@ function App() {
         <div 
           className="app__split-bar"
           onMouseDown={handleSplitMouseDown}
+          onTouchStart={handleSplitTouchStart}
           role="separator"
           aria-label="Resize media and transcript panes"
           aria-orientation="horizontal"

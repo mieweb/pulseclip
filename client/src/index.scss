@@ -2,13 +2,21 @@
   box-sizing: border-box;
 }
 
-body {
+html, body {
   margin: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', 'Oxygen',
     'Ubuntu', 'Cantarell', 'Fira Sans', 'Droid Sans', 'Helvetica Neue',
     sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+}
+
+// Prevent page scroll when in split view mode
+html.split-view-active,
+html.split-view-active body {
+  overflow: hidden;
+  height: 100%;
+  overscroll-behavior: none;
 }
 
 code {
