@@ -295,6 +295,19 @@
         border-color: rgba(244, 67, 54, 0.3);
       }
     }
+
+    &--anchor {
+      background: rgba(255, 193, 7, 0.4);
+      color: #fff;
+      border: 2px solid #ffc107;
+      border-radius: 4px;
+      box-shadow: 0 0 8px rgba(255, 193, 7, 0.5);
+      
+      &:hover {
+        background: rgba(255, 193, 7, 0.5);
+        border-color: #ffca28;
+      }
+    }
   }
 
   // Cursor and selection styles only when content is focused

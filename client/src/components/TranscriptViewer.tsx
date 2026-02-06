@@ -607,6 +607,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const [cursorIndex, setCursorIndex] = useState<number>(0);
   const [selectionAnchor, setSelectionAnchor] = useState<number | null>(null);
   const [selection, setSelection] = useState<SelectionRange | null>(null);
+  const [doubleClickAnchor, setDoubleClickAnchor] = useState<number | null>(null);
   const [isSeeking, setIsSeeking] = useState(false);
   const [isPlayingSequence, setIsPlayingSequence] = useState(false);
   const [isFocused, setIsFocused] = useState(false);
@@ -836,6 +837,17 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         start: Math.min(selectionAnchor, index),
         end: Math.max(selectionAnchor, index),
       });
+    } else if (doubleClickAnchor !== null && doubleClickAnchor !== index && !isDragging.current) {
+      // If we have a double-click anchor AND clicking a different word, select range
+      const start = Math.min(doubleClickAnchor, index);
+      const end = Math.max(doubleClickAnchor, index);
+      setSelection({ start, end });
+      setSelectionAnchor(doubleClickAnchor);
+      setDoubleClickAnchor(null); // Clear the anchor after selection
+      debug('Selection', `Selected range ${start}-${end} from double-click anchor`);
+    } else if (doubleClickAnchor === index) {
+      // Clicking on the anchor itself - do nothing, wait for potential double-click
+      debug('Click', `Clicked on anchor word, waiting for double-click`);
     } else if (!isDragging.current) {
       // Only clear selection and play if not dragging
       // Clear selection and set new anchor
@@ -951,7 +963,17 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     e.preventDefault();
     // Don't trigger if long press already fired
     if (longPressTriggered.current) return;
-    toggleWordDeleted(index, 'Double-click');
+    
+    // If clicking on the current anchor, clear it
+    if (doubleClickAnchor === index) {
+      setDoubleClickAnchor(null);
+      debug('Anchor', `Cleared anchor at index ${index}`);
+    } else {
+      // Set new anchor (or reset if one already exists)
+      setDoubleClickAnchor(index);
+      setSelection(null); // Clear any existing selection
+      debug('Anchor', `Set anchor at index ${index} ("${editedWords[index]?.word.text}")`);
+    }
   };
 
   const handleWordMouseDown = (index: number, e: React.MouseEvent) => {
@@ -1413,7 +1435,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         onDelete={handleEditorDelete}
       />
 
-      {hasEdits && (
+      {(hasEdits || doubleClickAnchor !== null || selection !== null) && (
         <div className="transcript-viewer__edit-bar">
           <div className="transcript-viewer__edit-buttons">
             <button
@@ -1486,6 +1508,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           const isDeleted = ew.deleted;
           const isInserted = ew.inserted;
           const isSilence = ew.word.wordType === 'silence';
+          const isAnchor = index === doubleClickAnchor;
           const showCursorBefore = isCursor && cursorPosition === 'before';
           const showCursorAfter = isCursor && cursorPosition === 'after' && index === editedWords.length - 1;
           
@@ -1501,6 +1524,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               }${isDeleted ? ' transcript-viewer__word--deleted' : ''
               }${isInserted ? ' transcript-viewer__word--inserted' : ''
               }${isSilence ? ' transcript-viewer__word--silence' : ''
+              }${isAnchor ? ' transcript-viewer__word--anchor' : ''
               }${showCursorBefore ? ' transcript-viewer__word--cursor-before' : ''
               }${showCursorAfter ? ' transcript-viewer__word--cursor-after' : ''}`}
               onClick={(e) => handleWordClick(ew.word, index, e)}
@@ -1512,9 +1536,10 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               title={`${ew.word.startMs}ms - ${ew.word.endMs}ms${
                 ew.word.confidence ? ` (${Math.round(ew.word.confidence * 100)}%)` : ''
               }${isSilence ? ` [SILENCE: ${((ew.word.endMs - ew.word.startMs) / 1000).toFixed(1)}s]` : ''
-              }${isDeleted ? ' [DELETED - double-click to restore]' : ''
+              }${isDeleted ? ' [DELETED]' : ''
               }${isInserted ? ' [INSERTED]' : ''
-              }${!isDeleted && !isInserted && !isSilence ? ' (double-click to delete)' : ''}`}
+              }${isAnchor ? ' [ANCHOR - click another word to select range, double-click to clear]' : ''
+              }${!isAnchor && !isDeleted ? ' (double-click to set anchor)' : ''}`}
             >
               {ew.word.text}{' '}
             </span>
