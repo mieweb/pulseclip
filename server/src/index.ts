@@ -200,6 +200,143 @@ function findMediaInArtipod(artipodPath: string): string | null {
   return mediaFile || null;
 }
 
+// Helper to get artipod metadata for Open Graph tags
+interface ArtipodMetadata {
+  title: string;
+  description: string;
+  thumbnailUrl: string | null;
+  durationSeconds: number | null;
+  mediaUrl: string | null;
+}
+
+function getArtipodMetadata(artipodId: string, baseUrl: string): ArtipodMetadata | null {
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+  
+  if (!existsSync(artipodPath)) return null;
+  
+  // Get title from featured list, fallback to artipodId
+  const featuredList = getFeatured();
+  const featured = featuredList.find(f => f.artipodId === artipodId);
+  const title = featured?.title || 'PulseClip Video';
+  
+  // Get thumbnail URL
+  const thumbnailPng = join(artipodPath, 'thumbnail.png');
+  const thumbnailJpg = join(artipodPath, 'thumbnail.jpg');
+  let thumbnailUrl: string | null = null;
+  if (existsSync(thumbnailPng)) {
+    thumbnailUrl = `${baseUrl}/artipods/${artipodId}/thumbnail.png`;
+  } else if (existsSync(thumbnailJpg)) {
+    thumbnailUrl = `${baseUrl}/artipods/${artipodId}/thumbnail.jpg`;
+  }
+  
+  // Get duration from edits.json (edited transcript time - sum of non-deleted words)
+  let durationSeconds: number | null = null;
+  const editsPath = join(artipodPath, 'edits.json');
+  if (existsSync(editsPath)) {
+    try {
+      const editsData = JSON.parse(readFileSync(editsPath, 'utf-8'));
+      if (editsData.editedWords && editsData.editedWords.length > 0) {
+        // Calculate total duration of non-deleted words
+        let totalMs = 0;
+        for (const editedWord of editsData.editedWords) {
+          if (!editedWord.deleted && editedWord.word?.startMs !== undefined && editedWord.word?.endMs !== undefined) {
+            totalMs += editedWord.word.endMs - editedWord.word.startMs;
+          }
+        }
+        if (totalMs > 0) {
+          durationSeconds = Math.ceil(totalMs / 1000);
+        }
+      }
+    } catch {
+      // Ignore parsing errors
+    }
+  }
+  
+  // Get media URL
+  const mediaFile = findMediaInArtipod(artipodPath);
+  const mediaUrl = mediaFile ? `${baseUrl}/artipods/${artipodId}/${mediaFile}` : null;
+  
+  // Format duration as X.X mins and append to title
+  let displayTitle = title;
+  let description = 'Watch and edit video transcripts with PulseClip';
+  if (durationSeconds !== null) {
+    const mins = (durationSeconds / 60).toFixed(1);
+    const durationStr = `${mins} mins`;
+    displayTitle = `${title} (${durationStr})`;
+    description = `Duration: ${durationStr}`;
+  }
+  
+  return {
+    title: displayTitle,
+    description,
+    thumbnailUrl,
+    durationSeconds,
+    mediaUrl,
+  };
+}
+
+// Generate HTML with Open Graph meta tags for social sharing previews
+function generateOgHtml(metadata: ArtipodMetadata, artipodId: string, baseUrl: string): string {
+  const canonicalUrl = `${baseUrl}/artipod/${artipodId}`;
+  
+  // Read the base index.html template
+  const indexPath = join(clientDistPath, 'index.html');
+  let html = existsSync(indexPath) 
+    ? readFileSync(indexPath, 'utf-8')
+    : `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8" /><title>PulseClip</title></head><body><div id="root"></div></body></html>`;
+  
+  // Build OG meta tags
+  const ogTags = [
+    `<meta property="og:title" content="${escapeHtml(metadata.title)}" />`,
+    `<meta property="og:description" content="${escapeHtml(metadata.description)}" />`,
+    `<meta property="og:type" content="video.other" />`,
+    `<meta property="og:url" content="${canonicalUrl}" />`,
+    `<meta property="og:site_name" content="PulseClip" />`,
+  ];
+  
+  if (metadata.thumbnailUrl) {
+    ogTags.push(`<meta property="og:image" content="${metadata.thumbnailUrl}" />`);
+    ogTags.push(`<meta property="og:image:width" content="1280" />`);
+    ogTags.push(`<meta property="og:image:height" content="720" />`);
+  }
+  
+  if (metadata.durationSeconds !== null) {
+    ogTags.push(`<meta property="og:video:duration" content="${metadata.durationSeconds}" />`);
+  }
+  
+  if (metadata.mediaUrl) {
+    ogTags.push(`<meta property="og:video" content="${metadata.mediaUrl}" />`);
+    ogTags.push(`<meta property="og:video:type" content="video/mp4" />`);
+  }
+  
+  // Twitter Card tags
+  ogTags.push(`<meta name="twitter:card" content="summary_large_image" />`);
+  ogTags.push(`<meta name="twitter:title" content="${escapeHtml(metadata.title)}" />`);
+  ogTags.push(`<meta name="twitter:description" content="${escapeHtml(metadata.description)}" />`);
+  if (metadata.thumbnailUrl) {
+    ogTags.push(`<meta name="twitter:image" content="${metadata.thumbnailUrl}" />`);
+  }
+  
+  // Update the title tag
+  html = html.replace(/<title>.*?<\/title>/, `<title>${escapeHtml(metadata.title)} - PulseClip</title>`);
+  
+  // Insert OG tags before </head>
+  const ogTagsHtml = ogTags.join('\n    ');
+  html = html.replace('</head>', `    ${ogTagsHtml}\n  </head>`);
+  
+  return html;
+}
+
+// Helper to escape HTML special characters
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 // Get artipod info by artipodId
 app.get('/api/artipod/:artipodId', (req, res) => {
   const { artipodId } = req.params;
@@ -525,6 +662,38 @@ app.delete('/api/featured/:filename', requireAuth, (req, res) => {
   }
   
   res.json({ success: true });
+});
+
+// Artipod page with Open Graph meta tags for social sharing previews (iMessage, Twitter, Facebook, etc.)
+app.get('/artipod/:artipodId', (req, res, next) => {
+  // Skip if this is an API request or not requesting HTML
+  const acceptHeader = req.headers.accept || '';
+  if (!acceptHeader.includes('text/html')) {
+    return next();
+  }
+  
+  const { artipodId } = req.params;
+  
+  // Validate artipodId format (UUID)
+  const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+  if (!uuidRegex.test(artipodId)) {
+    return next();
+  }
+  
+  // Get base URL from request
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+  const baseUrl = `${protocol}://${host}`;
+  
+  // Get artipod metadata
+  const metadata = getArtipodMetadata(artipodId, baseUrl);
+  if (!metadata) {
+    return next(); // Fall through to SPA fallback for 404 handling
+  }
+  
+  // Generate and send HTML with OG meta tags
+  const html = generateOgHtml(metadata, artipodId, baseUrl);
+  res.type('html').send(html);
 });
 
 // SPA fallback - serve index.html for all non-API routes (must be after all other routes)
