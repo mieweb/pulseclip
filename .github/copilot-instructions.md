@@ -41,6 +41,22 @@
 - Let the user interact with the browser after navigation or testing
 - Only use `browser_close` when the user specifically requests it
 
+## Production vs Development Mode
+
+### 🚀 Environment Detection
+- **Check `.env` for `MYNAME`**: Before testing, check if `MYNAME` is defined in the server `.env` file
+- **If `MYNAME` is defined**: This indicates a production/proxy environment
+  - Run `npm run build` followed by `npm run start` to serve the built application
+  - Use the `MYNAME` URL (e.g., `https://pulseclip.os.mieweb.org/`) for all browser testing
+  - Do NOT use `localhost` URLs for testing - the app is behind an nginx proxy
+- **If `MYNAME` is not defined**: Use development mode with `localhost:3000`
+
+### 🔧 Testing Workflow
+1. Read `server/.env` to check for `MYNAME` variable
+2. If `MYNAME` exists, build and start the server: `npm run build && npm run start`
+3. Navigate to the `MYNAME` URL for browser testing (not localhost)
+4. The nginx proxy handles routing to the local server
+
 ## HTML & CSS Guidelines
 - **Semantic Naming**: Every `<div>` and other structural element must use a meaningful, semantic class name that clearly indicates its purpose or role within the layout.
 - **CSS Simplicity**: Styles should avoid global resets or overrides that affect unrelated components or default browser behavior. Keep changes scoped and minimal.
