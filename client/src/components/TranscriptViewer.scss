@@ -1,7 +1,8 @@
 .transcript-viewer {
   display: flex;
   flex-direction: column;
-  height: 100%;
+  flex: 1;
+  min-height: 0; // Critical for flex child to allow shrinking and enable overflow scroll
   overflow: hidden;
   
   &__header {
@@ -209,6 +210,7 @@
   
   &__content {
     flex: 1;
+    min-height: 0; // Critical for flex child scrolling
     overflow-y: auto;
     overflow-x: hidden;
     padding: 16px;

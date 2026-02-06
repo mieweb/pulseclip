@@ -250,10 +250,12 @@
 
 // Split view - main working layout
 .app--split {
-  min-height: 100vh;
+  height: 100vh;
+  max-height: 100vh;
   display: flex;
   flex-direction: column;
   background: #0f0f1a;
+  overflow: hidden;
 }
 
 .app__toolbar {
@@ -449,6 +451,12 @@
   flex-direction: column;
   flex: 1;
   min-height: 0;
+  overflow: hidden;
+
+  &--dragging {
+    cursor: ns-resize;
+    user-select: none;
+  }
 }
 
 .app__media-pane {
@@ -457,7 +465,37 @@
   align-items: center;
   justify-content: center;
   background: #000;
-  max-height: 50vh;
+  min-height: 100px;
+  overflow: hidden;
+}
+
+.app__split-bar {
+  flex-shrink: 0;
+  height: 8px;
+  background: #1a1a2e;
+  cursor: ns-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.2s;
+
+  &:hover,
+  &:active {
+    background: #2a2a4e;
+  }
+}
+
+.app__split-bar-handle {
+  width: 40px;
+  height: 4px;
+  background: #4a4a6a;
+  border-radius: 2px;
+  transition: background-color 0.2s;
+
+  .app__split-bar:hover &,
+  .app__split-bar:active & {
+    background: #6a6a8a;
+  }
 }
 
 .app__transcript-pane {
@@ -466,7 +504,7 @@
   flex-direction: column;
   background: #16213e;
   overflow: hidden;
-  min-height: 200px;
+  min-height: 100px;
 }
 
 .app__transcript-toolbar {

@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { FileUpload } from './components/FileUpload';
 import { MediaPlayer } from './components/MediaPlayer';
@@ -34,7 +34,10 @@ function App() {
   const [showFeaturedModal, setShowFeaturedModal] = useState(false);
   const [featuredTitle, setFeaturedTitle] = useState('');
   const [featuredThumbnail, setFeaturedThumbnail] = useState('');
+  const [splitPosition, setSplitPosition] = useState(50); // Percentage for media pane height
+  const [isDragging, setIsDragging] = useState(false);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
+  const contentRef = useRef<HTMLElement>(null);
   const hasAutoTranscribed = useRef(false);
 
   // Determine current view state
@@ -47,6 +50,36 @@ function App() {
     : mediaUrl
     ? 'ready'
     : 'upload';
+
+  // Handle split bar drag
+  const handleSplitMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setIsDragging(true);
+  }, []);
+
+  useEffect(() => {
+    if (!isDragging) return;
+
+    const handleMouseMove = (e: MouseEvent) => {
+      if (!contentRef.current) return;
+      const rect = contentRef.current.getBoundingClientRect();
+      const newPosition = ((e.clientY - rect.top) / rect.height) * 100;
+      // Clamp between 20% and 80%
+      setSplitPosition(Math.min(80, Math.max(20, newPosition)));
+    };
+
+    const handleMouseUp = () => {
+      setIsDragging(false);
+    };
+
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [isDragging]);
 
   // Load artipod from URL parameter on mount
   useEffect(() => {
@@ -755,9 +788,22 @@ function App() {
       )}
 
       {/* Split content area */}
-      <main className="app__content">
-        <div className="app__media-pane">
+      <main className={`app__content${isDragging ? ' app__content--dragging' : ''}`} ref={contentRef}>
+        <div 
+          className="app__media-pane" 
+          style={{ height: `${splitPosition}%`, maxHeight: 'none' }}
+        >
           {mediaUrl && <MediaPlayer mediaUrl={mediaUrl} mediaRef={mediaRef} />}
+        </div>
+
+        <div 
+          className="app__split-bar"
+          onMouseDown={handleSplitMouseDown}
+          role="separator"
+          aria-label="Resize media and transcript panes"
+          aria-orientation="horizontal"
+        >
+          <div className="app__split-bar-handle" />
         </div>
 
         <div className="app__transcript-pane">
