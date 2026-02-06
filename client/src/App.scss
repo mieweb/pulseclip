@@ -30,13 +30,13 @@
   font-size: 14px;
 }
 
-// Demos section on upload page
-.app__demos {
+// Featured pulses section on upload page
+.app__featured {
   margin-top: 32px;
   text-align: center;
 }
 
-.app__demos-title {
+.app__featured-title {
   color: #888;
   font-size: 14px;
   font-weight: 500;
@@ -45,7 +45,7 @@
   letter-spacing: 0.5px;
 }
 
-.app__demos-list {
+.app__featured-list {
   list-style: none;
   padding: 0;
   margin: 0;
@@ -55,7 +55,7 @@
   gap: 8px;
 }
 
-.app__demo-link {
+.app__featured-link {
   display: inline-flex;
   align-items: center;
   gap: 8px;
@@ -80,18 +80,18 @@
   }
 }
 
-.app__demo-thumb {
+.app__featured-thumb {
   width: 100px;
   height: 60px;
   object-fit: cover;
   border-radius: 4px;
 }
 
-.app__demo-icon {
+.app__featured-icon {
   font-size: 16px;
 }
 
-.app__demo-title {
+.app__featured-pulse-title {
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -484,8 +484,8 @@
   }
 }
 
-// Demo Modal
-.demo-modal {
+// Featured Modal
+.featured-modal {
   &__label {
     display: block;
     color: #aaa;

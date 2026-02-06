@@ -69,7 +69,7 @@ export interface TranscriptionResult {
   raw: any;
 }
 
-export interface Demo {
+export interface FeaturedPulse {
   filename: string;
   title: string;
   thumbnail?: string;

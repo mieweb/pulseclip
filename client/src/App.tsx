@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { FileUpload } from './components/FileUpload';
 import { MediaPlayer } from './components/MediaPlayer';
 import { TranscriptViewer } from './components/TranscriptViewer';
-import type { Provider, TranscriptionResult, Demo } from './types';
+import type { Provider, TranscriptionResult, FeaturedPulse } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
 import './App.scss';
 
@@ -28,11 +28,11 @@ function App() {
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('pulseclip_api_key') || '');
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [pendingApiKey, setPendingApiKey] = useState('');
-  const [demos, setDemos] = useState<Demo[]>([]);
-  const [isCurrentFileDemo, setIsCurrentFileDemo] = useState(false);
-  const [showDemoModal, setShowDemoModal] = useState(false);
-  const [demoTitle, setDemoTitle] = useState('');
-  const [demoThumbnail, setDemoThumbnail] = useState('');
+  const [featuredPulses, setFeaturedPulses] = useState<FeaturedPulse[]>([]);
+  const [isCurrentPulseFeatured, setIsCurrentPulseFeatured] = useState(false);
+  const [showFeaturedModal, setShowFeaturedModal] = useState(false);
+  const [featuredTitle, setFeaturedTitle] = useState('');
+  const [featuredThumbnail, setFeaturedThumbnail] = useState('');
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
   const hasAutoTranscribed = useRef(false);
 
@@ -85,31 +85,31 @@ function App() {
       });
   }, []);
 
-  // Load demos on mount
+  // Load featured pulses on mount
   useEffect(() => {
-    fetch('/api/demos')
+    fetch('/api/featured')
       .then((res) => res.json())
       .then((data) => {
-        setDemos(data.demos || []);
+        setFeaturedPulses(data.featured || []);
       })
       .catch((err) => {
-        console.error('Failed to load demos:', err);
+        console.error('Failed to load featured pulses:', err);
       });
   }, []);
 
-  // Check if current file is a demo
+  // Check if current pulse is featured
   useEffect(() => {
     if (mediaFilename) {
-      fetch(`/api/demos/${mediaFilename}`)
+      fetch(`/api/featured/${mediaFilename}`)
         .then((res) => res.json())
         .then((data) => {
-          setIsCurrentFileDemo(data.isDemo);
+          setIsCurrentPulseFeatured(data.isFeatured);
         })
         .catch(() => {
-          setIsCurrentFileDemo(false);
+          setIsCurrentPulseFeatured(false);
         });
     } else {
-      setIsCurrentFileDemo(false);
+      setIsCurrentPulseFeatured(false);
     }
   }, [mediaFilename]);
 
@@ -204,7 +204,7 @@ function App() {
     handleTranscribe(true);
   };
 
-  const handleNewFile = () => {
+  const handleNewPulse = () => {
     setMediaUrl(null);
     setMediaFilename('');
     setTranscriptionResult(null);
@@ -232,16 +232,16 @@ function App() {
     setShowApiKeyModal(true);
   };
 
-  const handleToggleDemo = async () => {
+  const handleToggleFeatured = async () => {
     if (!mediaFilename || !apiKey) {
       setShowApiKeyModal(true);
       return;
     }
 
-    if (isCurrentFileDemo) {
-      // Remove demo
+    if (isCurrentPulseFeatured) {
+      // Remove from featured
       try {
-        const response = await fetch(`/api/demos/${mediaFilename}`, {
+        const response = await fetch(`/api/featured/${mediaFilename}`, {
           method: 'DELETE',
           headers: {
             'X-API-Key': apiKey,
@@ -254,30 +254,30 @@ function App() {
         }
 
         if (response.ok) {
-          setIsCurrentFileDemo(false);
-          setDemos((prev) => prev.filter((d) => d.filename !== mediaFilename));
+          setIsCurrentPulseFeatured(false);
+          setFeaturedPulses((prev) => prev.filter((p) => p.filename !== mediaFilename));
         }
       } catch (err) {
-        console.error('Failed to remove demo:', err);
+        console.error('Failed to remove from featured:', err);
       }
     } else {
-      // Show demo modal to set title/thumbnail
-      const existingDemo = demos.find((d) => d.filename === mediaFilename);
-      setDemoTitle(existingDemo?.title || mediaFilename);
-      setDemoThumbnail(existingDemo?.thumbnail || '');
-      setShowDemoModal(true);
+      // Show featured modal to set title/thumbnail
+      const existingPulse = featuredPulses.find((p) => p.filename === mediaFilename);
+      setFeaturedTitle(existingPulse?.title || mediaFilename);
+      setFeaturedThumbnail(existingPulse?.thumbnail || '');
+      setShowFeaturedModal(true);
       setMenuOpen(false);
     }
   };
 
-  const handleDemoSubmit = async () => {
+  const handleFeaturedSubmit = async () => {
     if (!mediaFilename || !apiKey) {
       setShowApiKeyModal(true);
       return;
     }
 
     try {
-      const response = await fetch('/api/demos', {
+      const response = await fetch('/api/featured', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -285,8 +285,8 @@ function App() {
         },
         body: JSON.stringify({
           filename: mediaFilename,
-          title: demoTitle.trim() || mediaFilename,
-          thumbnail: demoThumbnail.trim() || undefined,
+          title: featuredTitle.trim() || mediaFilename,
+          thumbnail: featuredThumbnail.trim() || undefined,
         }),
       });
 
@@ -297,21 +297,21 @@ function App() {
 
       if (response.ok) {
         const data = await response.json();
-        setIsCurrentFileDemo(true);
-        setDemos((prev) => {
-          const filtered = prev.filter((d) => d.filename !== mediaFilename);
-          return [...filtered, data.demo];
+        setIsCurrentPulseFeatured(true);
+        setFeaturedPulses((prev) => {
+          const filtered = prev.filter((p) => p.filename !== mediaFilename);
+          return [...filtered, data.pulse];
         });
-        setShowDemoModal(false);
-        setDemoTitle('');
-        setDemoThumbnail('');
+        setShowFeaturedModal(false);
+        setFeaturedTitle('');
+        setFeaturedThumbnail('');
       }
     } catch (err) {
-      console.error('Failed to save demo:', err);
+      console.error('Failed to save featured pulse:', err);
     }
   };
 
-  const handleDeleteFile = async () => {
+  const handleDeletePulse = async () => {
     if (!mediaFilename) return;
     
     if (!apiKey) {
@@ -320,7 +320,7 @@ function App() {
     }
 
     // Confirm deletion
-    if (!window.confirm(`Are you sure you want to delete "${mediaFilename}"? This cannot be undone.`)) {
+    if (!window.confirm(`Are you sure you want to delete this pulse? This cannot be undone.`)) {
       return;
     }
 
@@ -338,17 +338,17 @@ function App() {
       }
 
       if (response.ok) {
-        // Remove from demos if it was there
-        setDemos((prev) => prev.filter((d) => d.filename !== mediaFilename));
+        // Remove from featured if it was there
+        setFeaturedPulses((prev) => prev.filter((p) => p.filename !== mediaFilename));
         // Navigate to home
-        handleNewFile();
+        handleNewPulse();
       } else {
         const data = await response.json();
-        setError(data.message || 'Failed to delete file');
+        setError(data.message || 'Failed to delete pulse');
       }
     } catch (err) {
-      console.error('Failed to delete file:', err);
-      setError('Failed to delete file');
+      console.error('Failed to delete pulse:', err);
+      setError('Failed to delete pulse');
     }
   };
 
@@ -418,8 +418,8 @@ function App() {
 
       const { url } = await uploadResponse.json();
 
-      // Update demo with the thumbnail URL
-      const demoResponse = await fetch('/api/demos', {
+      // Update featured pulse with the thumbnail URL
+      const featuredResponse = await fetch('/api/featured', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -427,19 +427,19 @@ function App() {
         },
         body: JSON.stringify({
           filename: mediaFilename,
-          title: demos.find((d) => d.filename === mediaFilename)?.title || mediaFilename,
+          title: featuredPulses.find((p) => p.filename === mediaFilename)?.title || mediaFilename,
           thumbnail: url,
         }),
       });
 
-      if (demoResponse.ok) {
-        const data = await demoResponse.json();
-        setDemos((prev) => {
-          const filtered = prev.filter((d) => d.filename !== mediaFilename);
-          return [...filtered, data.demo];
+      if (featuredResponse.ok) {
+        const data = await featuredResponse.json();
+        setFeaturedPulses((prev) => {
+          const filtered = prev.filter((p) => p.filename !== mediaFilename);
+          return [...filtered, data.pulse];
         });
-        // Also update the demoThumbnail state if modal is open
-        setDemoThumbnail(url);
+        // Also update the featuredThumbnail state if modal is open
+        setFeaturedThumbnail(url);
         return true;
       }
       return false;
@@ -490,46 +490,46 @@ function App() {
     );
   };
 
-  // Render Demo Modal
-  const renderDemoModal = () => {
-    if (!showDemoModal) return null;
+  // Render Featured Modal
+  const renderFeaturedModal = () => {
+    if (!showFeaturedModal) return null;
     return (
-      <div className="api-key-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="demo-modal-title">
-        <div className="api-key-modal demo-modal">
-          <h3 id="demo-modal-title">{isCurrentFileDemo ? 'Edit Demo' : 'Mark as Demo'}</h3>
-          <p>Set a display title and optional thumbnail for this demo.</p>
-          <label className="demo-modal__label">
+      <div className="api-key-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="featured-modal-title">
+        <div className="api-key-modal featured-modal">
+          <h3 id="featured-modal-title">{isCurrentPulseFeatured ? 'Edit Featured Pulse' : 'Mark as Featured'}</h3>
+          <p>Set a display title and optional thumbnail for this featured pulse.</p>
+          <label className="featured-modal__label">
             Title
             <input
               type="text"
-              value={demoTitle}
-              onChange={(e) => setDemoTitle(e.target.value)}
-              placeholder="Enter demo title"
+              value={featuredTitle}
+              onChange={(e) => setFeaturedTitle(e.target.value)}
+              placeholder="Enter pulse title"
               className="api-key-modal__input"
-              onKeyDown={(e) => e.key === 'Enter' && handleDemoSubmit()}
+              onKeyDown={(e) => e.key === 'Enter' && handleFeaturedSubmit()}
               autoFocus
             />
           </label>
-          <label className="demo-modal__label">
+          <label className="featured-modal__label">
             Thumbnail URL (optional)
             <input
               type="url"
-              value={demoThumbnail}
-              onChange={(e) => setDemoThumbnail(e.target.value)}
+              value={featuredThumbnail}
+              onChange={(e) => setFeaturedThumbnail(e.target.value)}
               placeholder="https://example.com/thumbnail.jpg"
               className="api-key-modal__input"
             />
           </label>
-          {demoThumbnail && (
-            <div className="demo-modal__preview">
-              <img src={demoThumbnail} alt="Thumbnail preview" onError={(e) => (e.currentTarget.style.display = 'none')} />
+          {featuredThumbnail && (
+            <div className="featured-modal__preview">
+              <img src={featuredThumbnail} alt="Thumbnail preview" onError={(e) => (e.currentTarget.style.display = 'none')} />
             </div>
           )}
           <div className="api-key-modal__actions">
-            <button onClick={() => setShowDemoModal(false)} className="api-key-modal__cancel">
+            <button onClick={() => setShowFeaturedModal(false)} className="api-key-modal__cancel">
               Cancel
             </button>
-            <button onClick={handleDemoSubmit} className="api-key-modal__submit">
+            <button onClick={handleFeaturedSubmit} className="api-key-modal__submit">
               Save
             </button>
           </div>
@@ -538,7 +538,7 @@ function App() {
     );
   };
 
-  // Loading view - when restoring file from URL
+  // Loading view - when restoring pulse from URL
   if (viewState === 'loading') {
     return (
       <div className="app app--upload">
@@ -546,7 +546,7 @@ function App() {
           <h1 className="app__title">🎙️ PulseClip</h1>
           <div className="app__loading">
             <div className="app__spinner" />
-            <p>Loading file...</p>
+            <p>Loading pulse...</p>
           </div>
         </div>
       </div>
@@ -558,30 +558,30 @@ function App() {
     return (
       <div className="app app--upload">
         {renderApiKeyModal()}
-        {renderDemoModal()}
+        {renderFeaturedModal()}
         <div className="app__upload-container">
           <h1 className="app__title">🎙️ PulseClip</h1>
           <FileUpload onFileUploaded={handleFileUploaded} disabled={false} apiKey={apiKey} onAuthError={handleAuthError} />
-          {demos.length > 0 && (
-            <div className="app__demos">
-              <h3 className="app__demos-title">Demo Files</h3>
-              <ul className="app__demos-list">
-                {demos.map((demo) => (
-                  <li key={demo.filename}>
+          {featuredPulses.length > 0 && (
+            <div className="app__featured">
+              <h3 className="app__featured-title">Featured Pulses</h3>
+              <ul className="app__featured-list">
+                {featuredPulses.map((pulse) => (
+                  <li key={pulse.filename}>
                     <a
-                      href={`/file/${demo.filename}`}
-                      className={`app__demo-link${demo.thumbnail ? ' app__demo-link--has-thumb' : ''}`}
+                      href={`/file/${pulse.filename}`}
+                      className={`app__featured-link${pulse.thumbnail ? ' app__featured-link--has-thumb' : ''}`}
                       onClick={(e) => {
                         e.preventDefault();
-                        navigate(`/file/${demo.filename}`);
+                        navigate(`/file/${pulse.filename}`);
                       }}
                     >
-                      {demo.thumbnail ? (
-                        <img src={demo.thumbnail} alt="" className="app__demo-thumb" />
+                      {pulse.thumbnail ? (
+                        <img src={pulse.thumbnail} alt="" className="app__featured-thumb" />
                       ) : (
-                        <span className="app__demo-icon">🎬</span>
+                        <span className="app__featured-icon">🎬</span>
                       )}
-                      <span className="app__demo-title">{demo.title}</span>
+                      <span className="app__featured-pulse-title">{pulse.title}</span>
                     </a>
                   </li>
                 ))}
@@ -602,7 +602,7 @@ function App() {
   return (
     <div className="app app--split">
       {renderApiKeyModal()}
-      {renderDemoModal()}
+      {renderFeaturedModal()}
       {/* Compact toolbar */}
       <header className="app__toolbar">
         <div className="app__toolbar-left">
@@ -653,33 +653,33 @@ function App() {
       {/* Dropdown menu */}
       {menuOpen && (
         <div className="app__menu">
-          <button className="app__menu-item" onClick={handleNewFile}>
-            📁 New File
+          <button className="app__menu-item" onClick={handleNewPulse}>
+            📁 New Pulse
           </button>
           {mediaFilename && (
             <>
-              {isCurrentFileDemo ? (
+              {isCurrentPulseFeatured ? (
                 <>
                   <button className="app__menu-item" onClick={() => {
-                    const existingDemo = demos.find((d) => d.filename === mediaFilename);
-                    setDemoTitle(existingDemo?.title || mediaFilename);
-                    setDemoThumbnail(existingDemo?.thumbnail || '');
-                    setShowDemoModal(true);
+                    const existingPulse = featuredPulses.find((p) => p.filename === mediaFilename);
+                    setFeaturedTitle(existingPulse?.title || mediaFilename);
+                    setFeaturedThumbnail(existingPulse?.thumbnail || '');
+                    setShowFeaturedModal(true);
                     setMenuOpen(false);
                   }}>
-                    ✏️ Edit Demo
+                    ✏️ Edit Featured
                   </button>
-                  <button className="app__menu-item" onClick={handleToggleDemo}>
-                    ⭐ Remove Demo
+                  <button className="app__menu-item" onClick={handleToggleFeatured}>
+                    ⭐ Remove Featured
                   </button>
                 </>
               ) : (
-                <button className="app__menu-item" onClick={handleToggleDemo}>
-                  ⭐ Mark as Demo
+                <button className="app__menu-item" onClick={handleToggleFeatured}>
+                  ⭐ Mark as Featured
                 </button>
               )}
-              <button className="app__menu-item app__menu-item--danger" onClick={handleDeleteFile}>
-                🗑️ Delete File
+              <button className="app__menu-item app__menu-item--danger" onClick={handleDeletePulse}>
+                🗑️ Delete Pulse
               </button>
             </>
           )}
@@ -767,7 +767,7 @@ function App() {
                 rawData={transcriptionResult.raw}
                 onHasEditsChange={setHasEdits}
                 onCaptureThumbnail={handleCaptureThumbnail}
-                showThumbnailCapture={isCurrentFileDemo}
+                showThumbnailCapture={isCurrentPulseFeatured}
               />
             </>
           )}

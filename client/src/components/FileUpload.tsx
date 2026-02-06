@@ -96,9 +96,9 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiK
           </div>
         ) : (
           <>
-            <div className="file-upload__icon">📁</div>
+            <div className="file-upload__icon">🎬</div>
             <p className="file-upload__text">
-              Drag and drop audio or video file here
+              Drag and drop audio or video pulse here
             </p>
             <p className="file-upload__hint">or</p>
             <label className="file-upload__button">
@@ -109,7 +109,7 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiK
                 disabled={disabled || uploading}
                 className="file-upload__input"
               />
-              Browse Files
+              Browse Pulses
             </label>
             <p className="file-upload__formats">
               Supports: MP3, WAV, MP4, MOV, and more

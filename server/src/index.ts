@@ -7,7 +7,7 @@ import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync } from 'fs';
 import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
 import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
-import { getDemos, addDemo, removeDemo, isDemo } from './demos.js';
+import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
 
 // Load environment variables
 dotenv.config();
@@ -80,7 +80,7 @@ app.get('/api/providers', (_req, res) => {
   res.json({ providers });
 });
 
-// Upload file (protected)
+// Upload pulse (protected)
 app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -179,14 +179,14 @@ app.post('/api/transcribe', async (req, res) => {
   }
 });
 
-// Get file info by filename
+// Get pulse info by filename
 app.get('/api/file/:filename', (req, res) => {
   const { filename } = req.params;
   const localPath = join(__dirname, '../uploads', filename);
   
-  // Check if file exists
+  // Check if pulse exists
   if (!existsSync(localPath)) {
-    return res.status(404).json({ error: 'File not found' });
+    return res.status(404).json({ error: 'Pulse not found' });
   }
   
   const stats = statSync(localPath);
@@ -201,38 +201,38 @@ app.get('/api/file/:filename', (req, res) => {
   });
 });
 
-// Delete file (protected)
+// Delete pulse (protected)
 app.delete('/api/file/:filename', requireAuth, async (req, res) => {
   const { filename } = req.params;
   const localPath = join(__dirname, '../uploads', filename);
   
-  // Check if file exists
+  // Check if pulse exists
   if (!existsSync(localPath)) {
-    return res.status(404).json({ error: 'File not found' });
+    return res.status(404).json({ error: 'Pulse not found' });
   }
   
   try {
-    // Remove cache entries for this file first (while file still exists for hash computation)
+    // Remove cache entries for this pulse first (while file still exists for hash computation)
     const cacheRemoved = await removeCacheForFile(localPath);
     
-    // Remove demo entry if exists
-    const demoRemoved = removeDemo(filename);
+    // Remove featured entry if exists
+    const featuredRemoved = removeFeatured(filename);
     
     // Delete the actual file
     unlinkSync(localPath);
     
-    console.log(`Deleted file: ${filename} (cache entries: ${cacheRemoved}, was demo: ${demoRemoved})`);
+    console.log(`Deleted pulse: ${filename} (cache entries: ${cacheRemoved}, was featured: ${featuredRemoved})`);
     
     res.json({
       success: true,
-      message: 'File deleted',
+      message: 'Pulse deleted',
       cacheEntriesRemoved: cacheRemoved,
-      demoRemoved,
+      featuredRemoved,
     });
   } catch (error) {
-    console.error('File deletion error:', error);
+    console.error('Pulse deletion error:', error);
     res.status(500).json({
-      error: 'Failed to delete file',
+      error: 'Failed to delete pulse',
       message: error instanceof Error ? error.message : 'Unknown error',
     });
   }
@@ -249,19 +249,19 @@ app.delete('/api/cache', (_req, res) => {
   res.json({ success: true, message: 'Cache cleared' });
 });
 
-// Demo management endpoints
+// Featured pulse management endpoints
 
-// Get list of demos (public)
-app.get('/api/demos', (_req, res) => {
-  const demos = getDemos();
-  res.json({ demos });
+// Get list of featured pulses (public)
+app.get('/api/featured', (_req, res) => {
+  const featured = getFeatured();
+  res.json({ featured });
 });
 
-// Check if a file is a demo (public)
-app.get('/api/demos/:filename', (req, res) => {
+// Check if a pulse is featured (public)
+app.get('/api/featured/:filename', (req, res) => {
   const { filename } = req.params;
-  const demo = isDemo(filename);
-  res.json({ isDemo: demo });
+  const featured = isFeatured(filename);
+  res.json({ isFeatured: featured });
 });
 
 // Upload thumbnail (protected) - accepts base64 image data
@@ -308,31 +308,31 @@ app.post('/api/thumbnail', requireAuth, (req, res) => {
   }
 });
 
-// Add or update a demo (protected)
-app.post('/api/demos', requireAuth, (req, res) => {
+// Add or update a featured pulse (protected)
+app.post('/api/featured', requireAuth, (req, res) => {
   const { filename, title, thumbnail } = req.body;
   
   if (!filename) {
     return res.status(400).json({ error: 'filename is required' });
   }
   
-  // Verify file exists
+  // Verify pulse exists
   const localPath = join(__dirname, '../uploads', filename);
   if (!existsSync(localPath)) {
-    return res.status(404).json({ error: 'File not found' });
+    return res.status(404).json({ error: 'Pulse not found' });
   }
   
-  const demo = addDemo(filename, title || filename, thumbnail);
-  res.json({ success: true, demo });
+  const pulse = addFeatured(filename, title || filename, thumbnail);
+  res.json({ success: true, pulse });
 });
 
-// Remove a demo (protected)
-app.delete('/api/demos/:filename', requireAuth, (req, res) => {
+// Remove a featured pulse (protected)
+app.delete('/api/featured/:filename', requireAuth, (req, res) => {
   const { filename } = req.params;
-  const removed = removeDemo(filename);
+  const removed = removeFeatured(filename);
   
   if (!removed) {
-    return res.status(404).json({ error: 'Demo not found' });
+    return res.status(404).json({ error: 'Featured pulse not found' });
   }
   
   res.json({ success: true });
