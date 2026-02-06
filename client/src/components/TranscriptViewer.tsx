@@ -445,7 +445,11 @@ const WordEditorModal: FC<WordEditorModalProps> = ({
 interface TranscriptViewerProps {
   transcript: Transcript;
   mediaRef: RefObject<HTMLAudioElement | HTMLVideoElement>;
-  viewMode?: 'transcript' | 'json' | 'edited-json';
+  viewMode?: 'transcript' | 'data';
+  dataSource?: 'editor' | 'original';
+  dataFormat?: 'yaml' | 'json';
+  onDataSourceChange?: (source: 'editor' | 'original') => void;
+  onDataFormatChange?: (format: 'yaml' | 'json') => void;
   rawData?: any;
   onHasEditsChange?: (hasEdits: boolean) => void;
   /** Callback when user wants to capture thumbnail at a specific timestamp (in ms) */
@@ -577,6 +581,10 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   transcript,
   mediaRef,
   viewMode = 'transcript',
+  dataSource = 'editor',
+  dataFormat = 'yaml',
+  onDataSourceChange,
+  onDataFormatChange,
   rawData,
   onHasEditsChange,
   onCaptureThumbnail,
@@ -1326,29 +1334,90 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     onHasEditsChange?.(hasEdits);
   }, [hasEdits, onHasEditsChange]);
 
-  // JSON view of original transcript
-  if (viewMode === 'json') {
-    return (
-      <div className="transcript-viewer">
-        <div className="transcript-viewer__header">
-          <h3>Original Transcript JSON</h3>
-        </div>
-        <div className="transcript-viewer__raw">
-          <pre>{JSON.stringify(transcript, null, 2)}</pre>
-        </div>
-      </div>
-    );
-  }
+  // Helper to format data as JSON or YAML
+  const formatData = (data: unknown, format: 'yaml' | 'json'): string => {
+    if (format === 'json') {
+      return JSON.stringify(data, null, 2);
+    }
+    // Simple YAML-like formatting (converts JSON to readable YAML format)
+    const toYaml = (obj: unknown, indent = 0): string => {
+      const spaces = '  '.repeat(indent);
+      if (obj === null || obj === undefined) return 'null';
+      if (typeof obj === 'boolean' || typeof obj === 'number') return String(obj);
+      if (typeof obj === 'string') {
+        // Quote strings that contain special characters
+        if (obj.includes('\n') || obj.includes(':') || obj.includes('#') || 
+            obj.startsWith(' ') || obj.endsWith(' ') || obj === '') {
+          return JSON.stringify(obj);
+        }
+        return obj;
+      }
+      if (Array.isArray(obj)) {
+        if (obj.length === 0) return '[]';
+        return obj.map(item => {
+          const itemStr = toYaml(item, indent + 1);
+          if (typeof item === 'object' && item !== null) {
+            return `\n${spaces}- ${itemStr.trim().replace(/^\n/, '').replace(/\n/g, '\n' + spaces + '  ')}`;
+          }
+          return `\n${spaces}- ${itemStr}`;
+        }).join('');
+      }
+      if (typeof obj === 'object') {
+        const entries = Object.entries(obj as Record<string, unknown>);
+        if (entries.length === 0) return '{}';
+        return entries.map(([key, value]) => {
+          const valueStr = toYaml(value, indent + 1);
+          if (typeof value === 'object' && value !== null && !Array.isArray(value)) {
+            return `\n${spaces}${key}:${valueStr}`;
+          } else if (Array.isArray(value)) {
+            return `\n${spaces}${key}:${valueStr}`;
+          }
+          return `\n${spaces}${key}: ${valueStr}`;
+        }).join('');
+      }
+      return String(obj);
+    };
+    return toYaml(data).trim();
+  };
 
-  // JSON view of edited state
-  if (viewMode === 'edited-json') {
+  // Data view (replaces old JSON and Edited JSON views)
+  if (viewMode === 'data') {
+    const dataToShow = dataSource === 'original' ? transcript : editedWords;
+    const formattedData = formatData(dataToShow, dataFormat);
+    
     return (
       <div className="transcript-viewer">
         <div className="transcript-viewer__header">
-          <h3>Edited State JSON</h3>
+          <h3>{dataSource === 'original' ? 'Original Data' : 'Editor Data'}</h3>
+          <div className="transcript-viewer__header-actions">
+            <div className="transcript-viewer__data-toggles">
+              <button
+                className={`transcript-viewer__source-btn ${dataSource === 'editor' ? 'transcript-viewer__source-btn--active' : ''}`}
+                onClick={() => onDataSourceChange?.('editor')}
+                aria-pressed={dataSource === 'editor'}
+              >
+                Editor
+              </button>
+              <button
+                className={`transcript-viewer__source-btn ${dataSource === 'original' ? 'transcript-viewer__source-btn--active' : ''}`}
+                onClick={() => onDataSourceChange?.('original')}
+                aria-pressed={dataSource === 'original'}
+              >
+                Original
+              </button>
+            </div>
+            <label className="transcript-viewer__format-toggle">
+              <input
+                type="checkbox"
+                checked={dataFormat === 'json'}
+                onChange={(e) => onDataFormatChange?.(e.target.checked ? 'json' : 'yaml')}
+              />
+              <span>JSON</span>
+            </label>
+          </div>
         </div>
         <div className="transcript-viewer__raw">
-          <pre>{JSON.stringify(editedWords, null, 2)}</pre>
+          <pre>{formattedData}</pre>
         </div>
       </div>
     );

@@ -104,6 +104,64 @@
     gap: 8px;
   }
 
+  &__data-toggles {
+    display: flex;
+    gap: 4px;
+  }
+
+  &__source-btn {
+    padding: 4px 10px;
+    font-size: 11px;
+    font-weight: 500;
+    background: rgba(255, 255, 255, 0.1);
+    color: #aaa;
+    border: 1px solid rgba(255, 255, 255, 0.2);
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease;
+
+    &:hover:not(:disabled) {
+      background: rgba(255, 255, 255, 0.15);
+      color: #fff;
+    }
+
+    &--active {
+      background: #2196F3;
+      color: white;
+      border-color: #2196F3;
+
+      &:hover {
+        background: #1976D2;
+      }
+    }
+  }
+
+  &__format-toggle {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: #aaa;
+    cursor: pointer;
+    padding: 4px 8px;
+    background: rgba(255, 255, 255, 0.05);
+    border-radius: 4px;
+    transition: background 0.15s ease;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.1);
+    }
+
+    input[type="checkbox"] {
+      cursor: pointer;
+      accent-color: #2196F3;
+    }
+
+    span {
+      user-select: none;
+    }
+  }
+
   &__filler-btn {
     padding: 4px 10px;
     font-size: 11px;

@@ -526,17 +526,17 @@
 }
 
 .app__retranscribe-btn {
-  padding: 6px 8px;
-  background: transparent;
-  color: #aaa;
+  padding: 6px 16px;
+  background: #2a2a4a;
+  color: white;
   border: 1px solid #3a3a5a;
   border-radius: 4px;
-  font-size: 16px;
+  font-size: 14px;
+  font-weight: 500;
   cursor: pointer;
-  line-height: 1;
   
   &:hover {
-    color: white;
+    background: #3a3a5a;
     border-color: #5a5a7a;
   }
 }

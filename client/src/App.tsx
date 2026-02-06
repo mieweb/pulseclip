@@ -21,7 +21,9 @@ function App() {
   const [transcribing, setTranscribing] = useState(false);
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<'transcript' | 'json' | 'edited-json'>('transcript');
+  const [viewMode, setViewMode] = useState<'transcript' | 'data'>('transcript');
+  const [dataSource, setDataSource] = useState<'editor' | 'original'>('editor');
+  const [dataFormat, setDataFormat] = useState<'yaml' | 'json'>('yaml');
   const [hasEdits, setHasEdits] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -274,6 +276,11 @@ function App() {
   };
 
   const handleRetranscribe = () => {
+    if (hasEdits) {
+      if (!window.confirm('Are you sure you want to re-transcribe? All edits will be lost.')) {
+        return;
+      }
+    }
     handleTranscribe(true);
   };
 
@@ -762,6 +769,17 @@ function App() {
           {viewState === 'transcribing' && (
             <span className="app__status">Transcribing...</span>
           )}
+
+          {viewState === 'viewing' && (
+            <button
+              className="app__retranscribe-btn"
+              onClick={handleRetranscribe}
+              title="Re-transcribe (ignore cache)"
+              aria-label="Re-transcribe"
+            >
+              Re-transcribe
+            </button>
+          )}
         </div>
       </header>
 
@@ -867,32 +885,21 @@ function App() {
                     Transcript
                   </button>
                   <button
-                    className={`app__toggle ${viewMode === 'json' ? 'app__toggle--active' : ''}`}
-                    onClick={() => setViewMode('json')}
+                    className={`app__toggle ${viewMode === 'data' ? 'app__toggle--active' : ''}`}
+                    onClick={() => setViewMode('data')}
                   >
-                    JSON
-                  </button>
-                  <button
-                    className={`app__toggle ${viewMode === 'edited-json' ? 'app__toggle--active' : ''}${!hasEdits ? ' app__toggle--disabled' : ''}`}
-                    onClick={() => hasEdits && setViewMode('edited-json')}
-                    disabled={!hasEdits}
-                  >
-                    Edited JSON
+                    Data
                   </button>
                 </div>
-                <button
-                  className="app__retranscribe-btn"
-                  onClick={handleRetranscribe}
-                  title="Re-transcribe (ignore cache)"
-                  aria-label="Re-transcribe"
-                >
-                  🔄
-                </button>
               </div>
               <TranscriptViewer
                 transcript={transcriptionResult.transcript}
                 mediaRef={mediaRef}
                 viewMode={viewMode}
+                dataSource={dataSource}
+                dataFormat={dataFormat}
+                onDataSourceChange={setDataSource}
+                onDataFormatChange={setDataFormat}
                 rawData={transcriptionResult.raw}
                 onHasEditsChange={setHasEdits}
                 onCaptureThumbnail={handleCaptureThumbnail}
