@@ -3,7 +3,7 @@ import { useParams, useNavigate } from 'react-router-dom';
 import { FileUpload } from './components/FileUpload';
 import { MediaPlayer } from './components/MediaPlayer';
 import { TranscriptViewer } from './components/TranscriptViewer';
-import type { Provider, TranscriptionResult } from './types';
+import type { Provider, TranscriptionResult, Demo } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
 import './App.scss';
 
@@ -28,6 +28,11 @@ function App() {
   const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('pulseclip_api_key') || '');
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [pendingApiKey, setPendingApiKey] = useState('');
+  const [demos, setDemos] = useState<Demo[]>([]);
+  const [isCurrentFileDemo, setIsCurrentFileDemo] = useState(false);
+  const [showDemoModal, setShowDemoModal] = useState(false);
+  const [demoTitle, setDemoTitle] = useState('');
+  const [demoThumbnail, setDemoThumbnail] = useState('');
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
   const hasAutoTranscribed = useRef(false);
 
@@ -79,6 +84,34 @@ function App() {
         setError('Failed to load transcription providers');
       });
   }, []);
+
+  // Load demos on mount
+  useEffect(() => {
+    fetch('/api/demos')
+      .then((res) => res.json())
+      .then((data) => {
+        setDemos(data.demos || []);
+      })
+      .catch((err) => {
+        console.error('Failed to load demos:', err);
+      });
+  }, []);
+
+  // Check if current file is a demo
+  useEffect(() => {
+    if (mediaFilename) {
+      fetch(`/api/demos/${mediaFilename}`)
+        .then((res) => res.json())
+        .then((data) => {
+          setIsCurrentFileDemo(data.isDemo);
+        })
+        .catch(() => {
+          setIsCurrentFileDemo(false);
+        });
+    } else {
+      setIsCurrentFileDemo(false);
+    }
+  }, [mediaFilename]);
 
   // Handle spacebar for play/pause toggle
   useEffect(() => {
@@ -199,6 +232,224 @@ function App() {
     setShowApiKeyModal(true);
   };
 
+  const handleToggleDemo = async () => {
+    if (!mediaFilename || !apiKey) {
+      setShowApiKeyModal(true);
+      return;
+    }
+
+    if (isCurrentFileDemo) {
+      // Remove demo
+      try {
+        const response = await fetch(`/api/demos/${mediaFilename}`, {
+          method: 'DELETE',
+          headers: {
+            'X-API-Key': apiKey,
+          },
+        });
+
+        if (response.status === 401) {
+          setShowApiKeyModal(true);
+          return;
+        }
+
+        if (response.ok) {
+          setIsCurrentFileDemo(false);
+          setDemos((prev) => prev.filter((d) => d.filename !== mediaFilename));
+        }
+      } catch (err) {
+        console.error('Failed to remove demo:', err);
+      }
+    } else {
+      // Show demo modal to set title/thumbnail
+      const existingDemo = demos.find((d) => d.filename === mediaFilename);
+      setDemoTitle(existingDemo?.title || mediaFilename);
+      setDemoThumbnail(existingDemo?.thumbnail || '');
+      setShowDemoModal(true);
+      setMenuOpen(false);
+    }
+  };
+
+  const handleDemoSubmit = async () => {
+    if (!mediaFilename || !apiKey) {
+      setShowApiKeyModal(true);
+      return;
+    }
+
+    try {
+      const response = await fetch('/api/demos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({
+          filename: mediaFilename,
+          title: demoTitle.trim() || mediaFilename,
+          thumbnail: demoThumbnail.trim() || undefined,
+        }),
+      });
+
+      if (response.status === 401) {
+        setShowApiKeyModal(true);
+        return;
+      }
+
+      if (response.ok) {
+        const data = await response.json();
+        setIsCurrentFileDemo(true);
+        setDemos((prev) => {
+          const filtered = prev.filter((d) => d.filename !== mediaFilename);
+          return [...filtered, data.demo];
+        });
+        setShowDemoModal(false);
+        setDemoTitle('');
+        setDemoThumbnail('');
+      }
+    } catch (err) {
+      console.error('Failed to save demo:', err);
+    }
+  };
+
+  const handleDeleteFile = async () => {
+    if (!mediaFilename) return;
+    
+    if (!apiKey) {
+      setShowApiKeyModal(true);
+      return;
+    }
+
+    // Confirm deletion
+    if (!window.confirm(`Are you sure you want to delete "${mediaFilename}"? This cannot be undone.`)) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/api/file/${mediaFilename}`, {
+        method: 'DELETE',
+        headers: {
+          'X-API-Key': apiKey,
+        },
+      });
+
+      if (response.status === 401) {
+        setShowApiKeyModal(true);
+        return;
+      }
+
+      if (response.ok) {
+        // Remove from demos if it was there
+        setDemos((prev) => prev.filter((d) => d.filename !== mediaFilename));
+        // Navigate to home
+        handleNewFile();
+      } else {
+        const data = await response.json();
+        setError(data.message || 'Failed to delete file');
+      }
+    } catch (err) {
+      console.error('Failed to delete file:', err);
+      setError('Failed to delete file');
+    }
+  };
+
+  const handleCaptureThumbnail = async (timestampMs: number): Promise<boolean> => {
+    if (!mediaRef.current || !mediaFilename || !apiKey) {
+      if (!apiKey) setShowApiKeyModal(true);
+      return false;
+    }
+
+    const video = mediaRef.current as HTMLVideoElement;
+    if (video.tagName !== 'VIDEO') {
+      setError('Thumbnail capture only works with video files');
+      return false;
+    }
+
+    try {
+      // Seek to the specified timestamp
+      const targetTime = timestampMs / 1000;
+      video.currentTime = targetTime;
+      
+      // Wait for seek to complete
+      await new Promise<void>((resolve) => {
+        const handleSeeked = () => {
+          video.removeEventListener('seeked', handleSeeked);
+          resolve();
+        };
+        video.addEventListener('seeked', handleSeeked);
+      });
+
+      // Create canvas and capture frame
+      const canvas = document.createElement('canvas');
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) {
+        setError('Failed to create canvas context');
+        return false;
+      }
+      ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+      
+      // Convert to base64
+      const imageData = canvas.toDataURL('image/png');
+
+      // Upload thumbnail
+      const uploadResponse = await fetch('/api/thumbnail', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({
+          imageData,
+          filename: mediaFilename,
+        }),
+      });
+
+      if (uploadResponse.status === 401) {
+        setShowApiKeyModal(true);
+        return false;
+      }
+
+      if (!uploadResponse.ok) {
+        const data = await uploadResponse.json();
+        setError(data.message || 'Failed to upload thumbnail');
+        return false;
+      }
+
+      const { url } = await uploadResponse.json();
+
+      // Update demo with the thumbnail URL
+      const demoResponse = await fetch('/api/demos', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({
+          filename: mediaFilename,
+          title: demos.find((d) => d.filename === mediaFilename)?.title || mediaFilename,
+          thumbnail: url,
+        }),
+      });
+
+      if (demoResponse.ok) {
+        const data = await demoResponse.json();
+        setDemos((prev) => {
+          const filtered = prev.filter((d) => d.filename !== mediaFilename);
+          return [...filtered, data.demo];
+        });
+        // Also update the demoThumbnail state if modal is open
+        setDemoThumbnail(url);
+        return true;
+      }
+      return false;
+    } catch (err) {
+      console.error('Failed to capture thumbnail:', err);
+      setError('Failed to capture thumbnail');
+      return false;
+    }
+  };
+
   const handleApiKeySubmit = () => {
     const key = pendingApiKey.trim();
     if (key) {
@@ -239,6 +490,54 @@ function App() {
     );
   };
 
+  // Render Demo Modal
+  const renderDemoModal = () => {
+    if (!showDemoModal) return null;
+    return (
+      <div className="api-key-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="demo-modal-title">
+        <div className="api-key-modal demo-modal">
+          <h3 id="demo-modal-title">{isCurrentFileDemo ? 'Edit Demo' : 'Mark as Demo'}</h3>
+          <p>Set a display title and optional thumbnail for this demo.</p>
+          <label className="demo-modal__label">
+            Title
+            <input
+              type="text"
+              value={demoTitle}
+              onChange={(e) => setDemoTitle(e.target.value)}
+              placeholder="Enter demo title"
+              className="api-key-modal__input"
+              onKeyDown={(e) => e.key === 'Enter' && handleDemoSubmit()}
+              autoFocus
+            />
+          </label>
+          <label className="demo-modal__label">
+            Thumbnail URL (optional)
+            <input
+              type="url"
+              value={demoThumbnail}
+              onChange={(e) => setDemoThumbnail(e.target.value)}
+              placeholder="https://example.com/thumbnail.jpg"
+              className="api-key-modal__input"
+            />
+          </label>
+          {demoThumbnail && (
+            <div className="demo-modal__preview">
+              <img src={demoThumbnail} alt="Thumbnail preview" onError={(e) => (e.currentTarget.style.display = 'none')} />
+            </div>
+          )}
+          <div className="api-key-modal__actions">
+            <button onClick={() => setShowDemoModal(false)} className="api-key-modal__cancel">
+              Cancel
+            </button>
+            <button onClick={handleDemoSubmit} className="api-key-modal__submit">
+              Save
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
   // Loading view - when restoring file from URL
   if (viewState === 'loading') {
     return (
@@ -259,9 +558,36 @@ function App() {
     return (
       <div className="app app--upload">
         {renderApiKeyModal()}
+        {renderDemoModal()}
         <div className="app__upload-container">
           <h1 className="app__title">🎙️ PulseClip</h1>
           <FileUpload onFileUploaded={handleFileUploaded} disabled={false} apiKey={apiKey} onAuthError={handleAuthError} />
+          {demos.length > 0 && (
+            <div className="app__demos">
+              <h3 className="app__demos-title">Demo Files</h3>
+              <ul className="app__demos-list">
+                {demos.map((demo) => (
+                  <li key={demo.filename}>
+                    <a
+                      href={`/file/${demo.filename}`}
+                      className={`app__demo-link${demo.thumbnail ? ' app__demo-link--has-thumb' : ''}`}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        navigate(`/file/${demo.filename}`);
+                      }}
+                    >
+                      {demo.thumbnail ? (
+                        <img src={demo.thumbnail} alt="" className="app__demo-thumb" />
+                      ) : (
+                        <span className="app__demo-icon">🎬</span>
+                      )}
+                      <span className="app__demo-title">{demo.title}</span>
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           {error && (
             <div className="app__error">
               <strong>Error:</strong> {error}
@@ -276,6 +602,7 @@ function App() {
   return (
     <div className="app app--split">
       {renderApiKeyModal()}
+      {renderDemoModal()}
       {/* Compact toolbar */}
       <header className="app__toolbar">
         <div className="app__toolbar-left">
@@ -329,6 +656,33 @@ function App() {
           <button className="app__menu-item" onClick={handleNewFile}>
             📁 New File
           </button>
+          {mediaFilename && (
+            <>
+              {isCurrentFileDemo ? (
+                <>
+                  <button className="app__menu-item" onClick={() => {
+                    const existingDemo = demos.find((d) => d.filename === mediaFilename);
+                    setDemoTitle(existingDemo?.title || mediaFilename);
+                    setDemoThumbnail(existingDemo?.thumbnail || '');
+                    setShowDemoModal(true);
+                    setMenuOpen(false);
+                  }}>
+                    ✏️ Edit Demo
+                  </button>
+                  <button className="app__menu-item" onClick={handleToggleDemo}>
+                    ⭐ Remove Demo
+                  </button>
+                </>
+              ) : (
+                <button className="app__menu-item" onClick={handleToggleDemo}>
+                  ⭐ Mark as Demo
+                </button>
+              )}
+              <button className="app__menu-item app__menu-item--danger" onClick={handleDeleteFile}>
+                🗑️ Delete File
+              </button>
+            </>
+          )}
           <button
             className="app__menu-item"
             onClick={() => {
@@ -400,8 +754,10 @@ function App() {
                 <button
                   className="app__retranscribe-btn"
                   onClick={handleRetranscribe}
+                  title="Re-transcribe (ignore cache)"
+                  aria-label="Re-transcribe"
                 >
-                  🔄 Re-transcribe
+                  🔄
                 </button>
               </div>
               <TranscriptViewer
@@ -410,6 +766,8 @@ function App() {
                 viewMode={viewMode}
                 rawData={transcriptionResult.raw}
                 onHasEditsChange={setHasEdits}
+                onCaptureThumbnail={handleCaptureThumbnail}
+                showThumbnailCapture={isCurrentFileDemo}
               />
             </>
           )}

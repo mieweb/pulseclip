@@ -132,3 +132,30 @@ export function getCacheStats(): { entryCount: number; entries: Array<{ key: str
     entries,
   };
 }
+
+// Remove cache entries for a specific file
+export async function removeCacheForFile(filePath: string): Promise<number> {
+  try {
+    const fileHash = await computeFileHash(filePath);
+    const index = loadCacheIndex();
+    let removedCount = 0;
+    
+    // Find and remove all entries with this file hash
+    for (const key of Object.keys(index.entries)) {
+      if (key.startsWith(fileHash)) {
+        delete index.entries[key];
+        removedCount++;
+      }
+    }
+    
+    if (removedCount > 0) {
+      saveCacheIndex(index);
+      console.log(`Removed ${removedCount} cache entries for file hash ${fileHash}`);
+    }
+    
+    return removedCount;
+  } catch (error) {
+    console.error('Cache removal error:', error);
+    return 0;
+  }
+}

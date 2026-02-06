@@ -8,14 +8,14 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-    padding: 12px 16px;
+    padding: 8px 16px;
     background: rgba(0, 0, 0, 0.2);
     border-bottom: 1px solid rgba(255, 255, 255, 0.1);
     flex-shrink: 0;
     
     h3 {
       margin: 0;
-      font-size: 16px;
+      font-size: 14px;
       font-weight: 600;
       color: white;
       display: flex;
@@ -75,12 +75,12 @@
   
   &__meta {
     display: flex;
-    gap: 12px;
-    font-size: 12px;
+    gap: 8px;
+    font-size: 11px;
     color: #aaa;
     
     span {
-      padding: 2px 8px;
+      padding: 2px 6px;
       background: rgba(255, 255, 255, 0.1);
       border-radius: 4px;
     }
@@ -100,12 +100,12 @@
   &__header-actions {
     display: flex;
     align-items: center;
-    gap: 16px;
+    gap: 8px;
   }
 
   &__filler-btn {
-    padding: 6px 12px;
-    font-size: 12px;
+    padding: 4px 10px;
+    font-size: 11px;
     font-weight: 500;
     background: rgba(156, 39, 176, 0.2);
     color: #ce93d8;
@@ -119,6 +119,29 @@
       color: #e1bee7;
       border-color: rgba(156, 39, 176, 0.6);
     }
+
+    &:disabled {
+      cursor: wait;
+      opacity: 0.7;
+    }
+  }
+
+  &__thumbnail-btn--loading {
+    background: rgba(255, 193, 7, 0.2);
+    color: #ffd54f;
+    border-color: rgba(255, 193, 7, 0.4);
+  }
+
+  &__thumbnail-btn--success {
+    background: rgba(76, 175, 80, 0.2);
+    color: #81c784;
+    border-color: rgba(76, 175, 80, 0.4);
+  }
+
+  &__thumbnail-btn--error {
+    background: rgba(244, 67, 54, 0.2);
+    color: #e57373;
+    border-color: rgba(244, 67, 54, 0.4);
   }
 
   &__edit-bar {
@@ -129,32 +152,59 @@
     background: rgba(255, 152, 0, 0.1);
     border-bottom: 1px solid rgba(255, 152, 0, 0.3);
     flex-shrink: 0;
+    gap: 8px;
+  }
+
+  &__edit-buttons {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  &__edit-btn {
+    padding: 4px 10px;
+    background: rgba(255, 152, 0, 0.2);
+    color: #ff9800;
+    border: 1px solid rgba(255, 152, 0, 0.4);
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.15s;
+    white-space: nowrap;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+
+    &:hover:not(:disabled) {
+      background: rgba(255, 152, 0, 0.35);
+      border-color: rgba(255, 152, 0, 0.6);
+    }
+
+    &:active:not(:disabled) {
+      background: rgba(255, 152, 0, 0.5);
+    }
+
+    &:disabled {
+      opacity: 0.4;
+      cursor: not-allowed;
+    }
+  }
+
+  &__shortcut {
+    font-size: 10px;
+    opacity: 0.7;
+    font-weight: 400;
+
+    // Hide shortcuts on touch-only devices (no hover capability)
+    @media (hover: none) {
+      display: none;
+    }
   }
 
   &__edit-hint {
     font-size: 12px;
     color: #ff9800;
-  }
-
-  &__play-edited-btn {
-    padding: 6px 12px;
-    background: #4CAF50;
-    color: white;
-    border: none;
-    border-radius: 4px;
-    font-size: 12px;
-    font-weight: 500;
-    cursor: pointer;
-    transition: background 0.2s;
-
-    &:hover:not(:disabled) {
-      background: #43a047;
-    }
-
-    &:disabled {
-      background: #666;
-      cursor: not-allowed;
-    }
   }
   
   &__content {

@@ -3,10 +3,11 @@ import cors from 'cors';
 import multer from 'multer';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { existsSync, statSync } from 'fs';
+import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync } from 'fs';
 import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
-import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache } from './cache.js';
+import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
+import { getDemos, addDemo, removeDemo, isDemo } from './demos.js';
 
 // Load environment variables
 dotenv.config();
@@ -57,7 +58,7 @@ const upload = multer({
 
 // Middleware
 app.use(cors());
-app.use(express.json());
+app.use(express.json({ limit: '10mb' })); // Increased limit for base64 image uploads
 
 // Serve uploaded files
 app.use('/uploads', express.static(join(__dirname, '../uploads')));
@@ -200,6 +201,43 @@ app.get('/api/file/:filename', (req, res) => {
   });
 });
 
+// Delete file (protected)
+app.delete('/api/file/:filename', requireAuth, async (req, res) => {
+  const { filename } = req.params;
+  const localPath = join(__dirname, '../uploads', filename);
+  
+  // Check if file exists
+  if (!existsSync(localPath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+  
+  try {
+    // Remove cache entries for this file first (while file still exists for hash computation)
+    const cacheRemoved = await removeCacheForFile(localPath);
+    
+    // Remove demo entry if exists
+    const demoRemoved = removeDemo(filename);
+    
+    // Delete the actual file
+    unlinkSync(localPath);
+    
+    console.log(`Deleted file: ${filename} (cache entries: ${cacheRemoved}, was demo: ${demoRemoved})`);
+    
+    res.json({
+      success: true,
+      message: 'File deleted',
+      cacheEntriesRemoved: cacheRemoved,
+      demoRemoved,
+    });
+  } catch (error) {
+    console.error('File deletion error:', error);
+    res.status(500).json({
+      error: 'Failed to delete file',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
 // Cache management endpoints
 app.get('/api/cache/stats', (_req, res) => {
   const stats = getCacheStats();
@@ -209,6 +247,95 @@ app.get('/api/cache/stats', (_req, res) => {
 app.delete('/api/cache', (_req, res) => {
   clearCache();
   res.json({ success: true, message: 'Cache cleared' });
+});
+
+// Demo management endpoints
+
+// Get list of demos (public)
+app.get('/api/demos', (_req, res) => {
+  const demos = getDemos();
+  res.json({ demos });
+});
+
+// Check if a file is a demo (public)
+app.get('/api/demos/:filename', (req, res) => {
+  const { filename } = req.params;
+  const demo = isDemo(filename);
+  res.json({ isDemo: demo });
+});
+
+// Upload thumbnail (protected) - accepts base64 image data
+app.post('/api/thumbnail', requireAuth, (req, res) => {
+  const { imageData, filename } = req.body;
+  
+  if (!imageData || !filename) {
+    return res.status(400).json({ error: 'imageData and filename are required' });
+  }
+  
+  try {
+    // Ensure thumbnails directory exists
+    const thumbDir = join(__dirname, '../uploads/thumbnails');
+    if (!existsSync(thumbDir)) {
+      mkdirSync(thumbDir, { recursive: true });
+    }
+    
+    // Parse base64 data (format: data:image/png;base64,...)
+    const matches = imageData.match(/^data:image\/(\w+);base64,(.+)$/);
+    if (!matches) {
+      return res.status(400).json({ error: 'Invalid image data format' });
+    }
+    
+    const extension = matches[1];
+    const base64Data = matches[2];
+    const buffer = Buffer.from(base64Data, 'base64');
+    
+    // Create unique filename based on the media filename
+    const thumbFilename = `${filename.replace(/\.[^.]+$/, '')}-thumb.${extension}`;
+    const thumbPath = join(thumbDir, thumbFilename);
+    
+    writeFileSync(thumbPath, buffer);
+    
+    const thumbUrl = `/uploads/thumbnails/${thumbFilename}`;
+    console.log(`Saved thumbnail: ${thumbFilename}`);
+    
+    res.json({ success: true, url: thumbUrl });
+  } catch (error) {
+    console.error('Thumbnail upload error:', error);
+    res.status(500).json({
+      error: 'Failed to save thumbnail',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  }
+});
+
+// Add or update a demo (protected)
+app.post('/api/demos', requireAuth, (req, res) => {
+  const { filename, title, thumbnail } = req.body;
+  
+  if (!filename) {
+    return res.status(400).json({ error: 'filename is required' });
+  }
+  
+  // Verify file exists
+  const localPath = join(__dirname, '../uploads', filename);
+  if (!existsSync(localPath)) {
+    return res.status(404).json({ error: 'File not found' });
+  }
+  
+  const demo = addDemo(filename, title || filename, thumbnail);
+  res.json({ success: true, demo });
+});
+
+// Remove a demo (protected)
+app.delete('/api/demos/:filename', requireAuth, (req, res) => {
+  const { filename } = req.params;
+  const removed = removeDemo(filename);
+  
+  if (!removed) {
+    return res.status(404).json({ error: 'Demo not found' });
+  }
+  
+  res.json({ success: true });
 });
 
 // SPA fallback - serve index.html for all non-API routes (must be after all other routes)

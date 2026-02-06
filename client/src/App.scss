@@ -30,6 +30,74 @@
   font-size: 14px;
 }
 
+// Demos section on upload page
+.app__demos {
+  margin-top: 32px;
+  text-align: center;
+}
+
+.app__demos-title {
+  color: #888;
+  font-size: 14px;
+  font-weight: 500;
+  margin: 0 0 12px 0;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.app__demos-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.app__demo-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  background: rgba(255, 255, 255, 0.08);
+  color: #4fc3f7;
+  text-decoration: none;
+  border-radius: 6px;
+  font-size: 14px;
+  transition: all 0.2s ease;
+  
+  &:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #81d4fa;
+  }
+  
+  &--has-thumb {
+    flex-direction: column;
+    padding: 8px;
+    min-width: 120px;
+    text-align: center;
+  }
+}
+
+.app__demo-thumb {
+  width: 100px;
+  height: 60px;
+  object-fit: cover;
+  border-radius: 4px;
+}
+
+.app__demo-icon {
+  font-size: 16px;
+}
+
+.app__demo-title {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+
 // Split view - main working layout
 .app--split {
   min-height: 100vh;
@@ -197,6 +265,14 @@
   &:not(:last-child) {
     border-bottom: 1px solid #2a2a4a;
   }
+  
+  &--danger {
+    color: #ef5350;
+    
+    &:hover {
+      background: rgba(239, 83, 80, 0.15);
+    }
+  }
 }
 
 .app__error-banner {
@@ -254,13 +330,14 @@
 }
 
 .app__retranscribe-btn {
-  padding: 6px 12px;
+  padding: 6px 8px;
   background: transparent;
   color: #aaa;
   border: 1px solid #3a3a5a;
   border-radius: 4px;
-  font-size: 13px;
+  font-size: 16px;
   cursor: pointer;
+  line-height: 1;
   
   &:hover {
     color: white;
@@ -403,6 +480,32 @@
 
     &:hover {
       background: #1976D2;
+    }
+  }
+}
+
+// Demo Modal
+.demo-modal {
+  &__label {
+    display: block;
+    color: #aaa;
+    font-size: 12px;
+    margin-bottom: 16px;
+    
+    input {
+      margin-top: 6px;
+    }
+  }
+  
+  &__preview {
+    margin-bottom: 8px;
+    text-align: center;
+    
+    img {
+      max-width: 100%;
+      max-height: 120px;
+      border-radius: 6px;
+      border: 1px solid #2a2a4a;
     }
   }
 }

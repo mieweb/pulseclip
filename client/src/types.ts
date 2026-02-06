@@ -68,3 +68,10 @@ export interface TranscriptionResult {
   transcript: Transcript;
   raw: any;
 }
+
+export interface Demo {
+  filename: string;
+  title: string;
+  thumbnail?: string;
+  addedAt: string;
+}

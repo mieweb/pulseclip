@@ -448,6 +448,10 @@ interface TranscriptViewerProps {
   viewMode?: 'transcript' | 'json' | 'edited-json';
   rawData?: any;
   onHasEditsChange?: (hasEdits: boolean) => void;
+  /** Callback when user wants to capture thumbnail at a specific timestamp (in ms) */
+  onCaptureThumbnail?: (timestampMs: number) => Promise<boolean>;
+  /** Whether to show the thumbnail capture button */
+  showThumbnailCapture?: boolean;
 }
 
 interface SelectionRange {
@@ -575,7 +579,12 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   viewMode = 'transcript',
   rawData,
   onHasEditsChange,
+  onCaptureThumbnail,
+  showThumbnailCapture = false,
 }) => {
+  // Thumbnail capture status: 'idle' | 'loading' | 'success' | 'error'
+  const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  
   // Edit mode state
   const [editedWords, setEditedWords] = useState<EditableWord[]>(() => 
     initEditableWords(transcript)
@@ -614,6 +623,56 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   // Segment playback refs
   const playbackSegments = useRef<PlaybackSegment[]>([]);
   const currentSegmentIndex = useRef<number>(0);
+
+  // Cut selection or word at cursor
+  const handleCut = useCallback(() => {
+    const startIdx = selection ? selection.start : cursorIndex;
+    const endIdx = selection ? selection.end : cursorIndex;
+    const cutWords = editedWords.slice(startIdx, endIdx + 1);
+    pushUndo();
+    setClipboard({ words: cutWords, operation: 'cut' });
+    setEditedWords(prev => {
+      const updated = [...prev];
+      for (let i = startIdx; i <= endIdx; i++) {
+        updated[i] = { ...updated[i], deleted: true };
+      }
+      return updated;
+    });
+    setHasEdits(true);
+    debug('Edit', `Cut ${cutWords.length} word(s): "${cutWords.map(w => w.word.text).join(' ')}"`);
+  }, [selection, cursorIndex, editedWords, pushUndo]);
+
+  // Paste from clipboard at cursor position
+  const handlePaste = useCallback(() => {
+    if (!clipboard) return;
+    pushUndo();
+    const insertIndex = cursorPosition === 'after' ? cursorIndex + 1 : cursorIndex;
+    setEditedWords(prev => {
+      const updated = [...prev];
+      const wordsToInsert = clipboard.words.map(w => ({ ...w, deleted: false, inserted: true }));
+      updated.splice(insertIndex, 0, ...wordsToInsert);
+      return updated;
+    });
+    setHasEdits(true);
+    debug('Edit', `Pasted ${clipboard.words.length} word(s) at position ${insertIndex}`);
+    setCursorIndex(insertIndex + clipboard.words.length - 1);
+    setCursorPosition('after');
+    setSelection(null);
+    setSelectionAnchor(null);
+  }, [clipboard, cursorPosition, cursorIndex, pushUndo]);
+
+  // Undo last edit
+  const handleUndo = useCallback(() => {
+    if (undoStack.length === 0) return;
+    const previousState = undoStack[undoStack.length - 1];
+    setUndoStack(prev => prev.slice(0, -1));
+    setEditedWords(previousState);
+    const isOriginal = previousState.every((ew, i) => 
+      ew.originalIndex === i && !ew.deleted
+    ) && previousState.length === transcript.words.length;
+    setHasEdits(!isOriginal);
+    debug('Edit', `Undo (${undoStack.length - 1} remaining)`);
+  }, [undoStack, transcript.words.length]);
 
   // Reset edited words when transcript changes
   useEffect(() => {
@@ -975,56 +1034,17 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     }
     // Cut - Cmd/Ctrl+X
     else if ((e.metaKey || e.ctrlKey) && e.key === 'x') {
-      pushUndo();
-      const startIdx = selection ? selection.start : cursorIndex;
-      const endIdx = selection ? selection.end : cursorIndex;
-      const cutWords = editedWords.slice(startIdx, endIdx + 1);
-      setClipboard({ words: cutWords, operation: 'cut' });
-      setEditedWords(prev => {
-        const updated = [...prev];
-        // Mark cut words as deleted
-        for (let i = startIdx; i <= endIdx; i++) {
-          updated[i] = { ...updated[i], deleted: true };
-        }
-        return updated;
-      });
-      setHasEdits(true);
-      debug('Edit', `Cut ${cutWords.length} word(s): "${cutWords.map(w => w.word.text).join(' ')}"`);
+      handleCut();
       handled = true;
     }
     // Paste - Cmd/Ctrl+V
     else if ((e.metaKey || e.ctrlKey) && e.key === 'v' && clipboard) {
-      pushUndo();
-      // Insert at cursor position: if 'before', insert before cursorIndex; if 'after', insert after cursorIndex
-      const insertIndex = cursorPosition === 'after' ? cursorIndex + 1 : cursorIndex;
-      setEditedWords(prev => {
-        const updated = [...prev];
-        const wordsToInsert = clipboard.words.map(w => ({ ...w, deleted: false, inserted: true }));
-        updated.splice(insertIndex, 0, ...wordsToInsert);
-        return updated;
-      });
-      setHasEdits(true);
-      debug('Edit', `Pasted ${clipboard.words.length} word(s) at position ${insertIndex}`);
-      // Move cursor to the last pasted word with cursor after it
-      setCursorIndex(insertIndex + clipboard.words.length - 1);
-      setCursorPosition('after');
-      setSelection(null);
-      setSelectionAnchor(null);
+      handlePaste();
       handled = true;
     }
     // Undo last edit - Cmd/Ctrl+Z
     else if ((e.metaKey || e.ctrlKey) && e.key === 'z' && !e.shiftKey) {
-      if (undoStack.length > 0) {
-        const previousState = undoStack[undoStack.length - 1];
-        setUndoStack(prev => prev.slice(0, -1));
-        setEditedWords(previousState);
-        // Check if we're back to original state
-        const isOriginal = previousState.every((ew, i) => 
-          ew.originalIndex === i && !ew.deleted
-        ) && previousState.length === transcript.words.length;
-        setHasEdits(!isOriginal);
-        debug('Edit', `Undo (${undoStack.length - 1} remaining)`);
-      }
+      handleUndo();
       handled = true;
     }
     else if (e.key === 'ArrowLeft') {
@@ -1194,7 +1214,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       const wordElement = contentRef.current?.querySelector(`[data-word-index="${newIndex}"]`);
       wordElement?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
     }
-  }, [cursorIndex, cursorPosition, selectionAnchor, editedWords, mediaRef, hasEdits, clipboard, selection, transcript, pushUndo, undoStack]);
+  }, [cursorIndex, cursorPosition, selectionAnchor, editedWords, mediaRef, hasEdits, clipboard, selection, transcript, pushUndo, undoStack, handleCut, handlePaste, handleUndo]);
 
   const isWordSelected = (index: number): boolean => {
     if (!selection) return false;
@@ -1329,6 +1349,30 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           >
             Remove Fillers
           </button>
+          {showThumbnailCapture && onCaptureThumbnail && (
+            <button
+              className={`transcript-viewer__filler-btn transcript-viewer__thumbnail-btn--${thumbnailStatus}`}
+              onClick={async () => {
+                // Use the cursor position word's start time
+                const word = editedWords[cursorIndex];
+                if (word && thumbnailStatus !== 'loading') {
+                  setThumbnailStatus('loading');
+                  const success = await onCaptureThumbnail(word.word.startMs);
+                  setThumbnailStatus(success ? 'success' : 'error');
+                  // Reset to idle after showing feedback
+                  setTimeout(() => setThumbnailStatus('idle'), 2000);
+                }
+              }}
+              disabled={thumbnailStatus === 'loading'}
+              aria-label="Capture thumbnail at current position"
+              title="Set this frame as demo thumbnail"
+            >
+              {thumbnailStatus === 'loading' ? '⏳ Saving...' :
+               thumbnailStatus === 'success' ? '✅ Saved!' :
+               thumbnailStatus === 'error' ? '❌ Failed' :
+               '📷 Thumbnail'}
+            </button>
+          )}
           <div className="transcript-viewer__meta">
             <span>{activeWordCount} words</span>
             {activeSilenceCount > 0 && (
@@ -1371,25 +1415,53 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
 
       {hasEdits && (
         <div className="transcript-viewer__edit-bar">
-          <span className="transcript-viewer__edit-hint">
-            Enter to edit • Del to delete • ⌘X cut • ⌘V paste • ⌘Z undo{undoStack.length > 0 ? ` (${undoStack.length})` : ''}
-          </span>
-          <button
-            className="transcript-viewer__play-edited-btn"
-            onClick={() => {
-              const segments = buildPlaybackSegments(editedWords);
-              if (segments.length > 0 && mediaRef.current) {
-                playbackSegments.current = segments;
-                currentSegmentIndex.current = 0;
-                setIsPlayingSequence(true);
-                mediaRef.current.currentTime = segments[0].startMs / 1000;
-                mediaRef.current.play();
-              }
-            }}
-            disabled={activeWordCount === 0}
-          >
-            ▶ Play Edited
-          </button>
+          <div className="transcript-viewer__edit-buttons">
+            <button
+              className="transcript-viewer__edit-btn"
+              onClick={() => cursorIndex !== null && openWordEditor(cursorIndex)}
+              title="Edit selected word (Enter)"
+            >
+              Edit <span className="transcript-viewer__shortcut">↵</span>
+            </button>
+            <button
+              className="transcript-viewer__edit-btn"
+              onClick={() => cursorIndex !== null && toggleWordDeleted(cursorIndex, 'button')}
+              title="Delete selected word (Del)"
+            >
+              Del <span className="transcript-viewer__shortcut">⌫</span>
+            </button>
+            <button
+              className="transcript-viewer__edit-btn"
+              onClick={() => {
+                if (selection) {
+                  handleCut();
+                } else if (cursorIndex !== null) {
+                  // Cut single word at cursor
+                  setSelection({ start: cursorIndex, end: cursorIndex });
+                  setTimeout(() => handleCut(), 0);
+                }
+              }}
+              title="Cut selection (⌘X)"
+            >
+              Cut <span className="transcript-viewer__shortcut">⌘X</span>
+            </button>
+            <button
+              className="transcript-viewer__edit-btn"
+              onClick={handlePaste}
+              disabled={!clipboard}
+              title="Paste (⌘V)"
+            >
+              Paste <span className="transcript-viewer__shortcut">⌘V</span>
+            </button>
+            <button
+              className="transcript-viewer__edit-btn"
+              onClick={handleUndo}
+              disabled={undoStack.length === 0}
+              title="Undo (⌘Z)"
+            >
+              Undo{undoStack.length > 0 ? ` (${undoStack.length})` : ''} <span className="transcript-viewer__shortcut">⌘Z</span>
+            </button>
+          </div>
         </div>
       )}
 
