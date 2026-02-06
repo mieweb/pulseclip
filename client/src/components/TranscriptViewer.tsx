@@ -1439,7 +1439,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     return (
       <div className="transcript-viewer">
         <div className="transcript-viewer__header">
-          <h3>{dataSource === 'original' ? 'Original Data' : 'Editor Data'}</h3>
+          <h3>{dataSource === 'original' ? 'Original' : 'Editor'}</h3>
           <div className="transcript-viewer__header-actions">
             <div className="transcript-viewer__data-toggles">
               <button
@@ -1482,14 +1482,15 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   return (
     <div className="transcript-viewer">
       <div className="transcript-viewer__header">
-        <h3>Transcript {hasEdits && <span className="transcript-viewer__edited-badge">Edited</span>}</h3>
+        <h3>{hasEdits && <span className="transcript-viewer__edited-badge">Edited</span>}</h3>
         <div className="transcript-viewer__header-actions">
           <button
             className="transcript-viewer__filler-btn"
             onClick={() => setShowFillerModal(true)}
             aria-label="Remove filler words"
+            title="Remove filler words"
           >
-            Remove Fillers
+            ✂️
           </button>
           <div className="transcript-viewer__meta">
             <span>{activeWordCount} words</span>
