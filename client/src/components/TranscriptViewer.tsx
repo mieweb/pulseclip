@@ -17,28 +17,57 @@ const DEFAULT_FILLER_WORDS = [
 interface FillerWordsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApply: (fillerWords: string[]) => void;
+  onApply: (fillerWords: string[], removeSilenceAbove: number | null) => void;
   matchingCounts: Map<string, number>;
+  /** Duration in ms for each filler word */
+  fillerDurations: Map<string, number>;
+  /** Count and total duration of silences at each threshold */
+  silenceCounts: { threshold: number; count: number; durationMs: number }[];
+  /** Current total duration in ms */
+  currentDurationMs: number;
 }
 
 /** Modal component for selecting filler words to remove */
-const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply, matchingCounts }) => {
+const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply, matchingCounts, fillerDurations, silenceCounts, currentDurationMs }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFillers, setSelectedFillers] = useState<Set<string>>(new Set(DEFAULT_FILLER_WORDS));
   const [customWord, setCustomWord] = useState('');
+  const [removeSilence, setRemoveSilence] = useState(false);
+  const [silenceThreshold, setSilenceThreshold] = useState(0.4); // Default 0.4s
   const modalRef = useRef<HTMLDivElement>(null);
 
-  // Filter filler words based on search
-  const filteredFillers = DEFAULT_FILLER_WORDS.filter(word =>
-    word.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Format duration in seconds or mm:ss
+  const formatDuration = (ms: number): string => {
+    const totalSeconds = Math.round(ms / 1000);
+    if (totalSeconds < 90) {
+      return `${totalSeconds}s`;
+    }
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  };
 
-  // Get custom words that have been added
-  const customFillers = Array.from(selectedFillers).filter(
-    word => !DEFAULT_FILLER_WORDS.includes(word)
-  ).filter(word =>
-    word.toLowerCase().includes(searchTerm.toLowerCase())
-  );
+  // Filter filler words based on search, then sort by count (matches first)
+  const filteredFillers = DEFAULT_FILLER_WORDS
+    .filter(word => word.toLowerCase().includes(searchTerm.toLowerCase()))
+    .sort((a, b) => {
+      const countA = matchingCounts.get(a) || 0;
+      const countB = matchingCounts.get(b) || 0;
+      // Sort by count descending, then alphabetically
+      if (countB !== countA) return countB - countA;
+      return a.localeCompare(b);
+    });
+
+  // Get custom words that have been added, sorted by count
+  const customFillers = Array.from(selectedFillers)
+    .filter(word => !DEFAULT_FILLER_WORDS.includes(word))
+    .filter(word => word.toLowerCase().includes(searchTerm.toLowerCase()))
+    .sort((a, b) => {
+      const countA = matchingCounts.get(a) || 0;
+      const countB = matchingCounts.get(b) || 0;
+      if (countB !== countA) return countB - countA;
+      return a.localeCompare(b);
+    });
 
   const toggleFiller = (word: string) => {
     setSelectedFillers(prev => {
@@ -60,8 +89,15 @@ const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply,
     }
   };
 
+  // Get count and duration of silences that would be removed at current threshold
+  const silenceData = removeSilence 
+    ? (silenceCounts.find(s => s.threshold === silenceThreshold) || { count: 0, durationMs: 0 })
+    : { count: 0, durationMs: 0 };
+  const silenceRemovalCount = silenceData.count;
+  const silenceDurationMs = silenceData.durationMs;
+
   const handleApply = () => {
-    onApply(Array.from(selectedFillers));
+    onApply(Array.from(selectedFillers), removeSilence ? silenceThreshold : null);
     onClose();
   };
 
@@ -73,11 +109,22 @@ const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply,
     setSelectedFillers(new Set());
   };
 
-  // Calculate total matches
-  const totalMatches = Array.from(selectedFillers).reduce(
+  // Calculate total matches (filler words + silences)
+  const fillerMatches = Array.from(selectedFillers).reduce(
     (sum, word) => sum + (matchingCounts.get(word) || 0),
     0
   );
+  const totalMatches = fillerMatches + silenceRemovalCount;
+
+  // Calculate time saved from filler words
+  const fillerTimeSavedMs = Array.from(selectedFillers).reduce(
+    (sum, word) => sum + (fillerDurations.get(word) || 0),
+    0
+  );
+  
+  // Total time saved (filler words + silences)
+  const totalTimeSavedMs = fillerTimeSavedMs + silenceDurationMs;
+  const newDurationMs = currentDurationMs - totalTimeSavedMs;
 
   // Close on escape
   useEffect(() => {
@@ -134,6 +181,35 @@ const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply,
           <button onClick={selectNone} className="filler-modal__action-btn">
             Select None
           </button>
+        </div>
+
+        <div className="filler-modal__silence-option">
+          <label className="filler-modal__silence-checkbox">
+            <input
+              type="checkbox"
+              checked={removeSilence}
+              onChange={(e) => setRemoveSilence(e.target.checked)}
+            />
+            <span>Remove silences greater than</span>
+          </label>
+          <select
+            className="filler-modal__silence-select"
+            value={silenceThreshold}
+            onChange={(e) => setSilenceThreshold(parseFloat(e.target.value))}
+            disabled={!removeSilence}
+            aria-label="Silence threshold in seconds"
+          >
+            <option value={0.3}>0.3s</option>
+            <option value={0.4}>0.4s</option>
+            <option value={0.5}>0.5s</option>
+            <option value={0.75}>0.75s</option>
+            <option value={1.0}>1.0s</option>
+            <option value={1.5}>1.5s</option>
+            <option value={2.0}>2.0s</option>
+          </select>
+          {removeSilence && silenceRemovalCount > 0 && (
+            <span className="filler-modal__silence-count">({silenceRemovalCount} silences)</span>
+          )}
         </div>
 
         <div className="filler-modal__list">
@@ -206,7 +282,7 @@ const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply,
 
         <div className="filler-modal__footer">
           <span className="filler-modal__summary">
-            {selectedFillers.size} words selected • {totalMatches} matches
+            {totalMatches} items • saves {formatDuration(totalTimeSavedMs)} → {formatDuration(newDurationMs)}
           </span>
           <div className="filler-modal__buttons">
             <button className="filler-modal__cancel" onClick={onClose}>
@@ -1708,15 +1784,69 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     return counts;
   }, [editedWords]);
 
-  // Handle removing filler words (exclude silences from matching)
-  const handleRemoveFillers = useCallback((fillerWords: string[]) => {
-    const fillerSet = new Set(fillerWords.map(f => f.toLowerCase()));
-    const newEditedWords = editedWords.map(ew => {
-      if (ew.deleted || ew.word.wordType === 'silence') return ew;
+  // Calculate filler word durations for modal (total duration per filler word type)
+  const getFillerDurations = useCallback((): Map<string, number> => {
+    const durations = new Map<string, number>();
+    for (const ew of editedWords) {
+      if (ew.deleted || ew.word.wordType === 'silence' || ew.word.wordType === 'silence-newline') continue;
       const wordText = ew.word.text.toLowerCase().replace(/[.,!?;:]/g, '');
-      if (fillerSet.has(wordText)) {
-        return { ...ew, deleted: true };
+      const wordDuration = ew.word.endMs - ew.word.startMs;
+      for (const filler of DEFAULT_FILLER_WORDS) {
+        if (wordText === filler) {
+          durations.set(filler, (durations.get(filler) || 0) + wordDuration);
+        }
       }
+      // Also track duration for the exact word in case it's a custom filler
+      durations.set(wordText, (durations.get(wordText) || 0) + wordDuration);
+    }
+    return durations;
+  }, [editedWords]);
+
+  // Calculate silence counts and durations at various thresholds for the filler modal
+  const getSilenceCounts = useCallback((): { threshold: number; count: number; durationMs: number }[] => {
+    const thresholds = [0.3, 0.4, 0.5, 0.75, 1.0, 1.5, 2.0];
+    return thresholds.map(threshold => {
+      const thresholdMs = threshold * 1000;
+      let count = 0;
+      let durationMs = 0;
+      for (const ew of editedWords) {
+        if (ew.deleted) continue;
+        if (ew.word.wordType !== 'silence' && ew.word.wordType !== 'silence-newline') continue;
+        const silenceDuration = ew.word.endMs - ew.word.startMs;
+        if (silenceDuration > thresholdMs) {
+          count++;
+          durationMs += silenceDuration;
+        }
+      }
+      return { threshold, count, durationMs };
+    });
+  }, [editedWords]);
+
+  // Handle removing filler words and optionally silences above threshold
+  const handleRemoveFillers = useCallback((fillerWords: string[], removeSilenceAbove: number | null) => {
+    const fillerSet = new Set(fillerWords.map(f => f.toLowerCase()));
+    const silenceThresholdMs = removeSilenceAbove !== null ? removeSilenceAbove * 1000 : null;
+    
+    const newEditedWords = editedWords.map(ew => {
+      if (ew.deleted) return ew;
+      
+      // Check if it's a silence that should be removed
+      if ((ew.word.wordType === 'silence' || ew.word.wordType === 'silence-newline') && silenceThresholdMs !== null) {
+        const durationMs = ew.word.endMs - ew.word.startMs;
+        if (durationMs > silenceThresholdMs) {
+          return { ...ew, deleted: true };
+        }
+        return ew;
+      }
+      
+      // Check if it's a filler word that should be removed
+      if (ew.word.wordType !== 'silence' && ew.word.wordType !== 'silence-newline') {
+        const wordText = ew.word.text.toLowerCase().replace(/[.,!?;:]/g, '');
+        if (fillerSet.has(wordText)) {
+          return { ...ew, deleted: true };
+        }
+      }
+      
       return ew;
     });
     
@@ -1955,6 +2085,9 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         onClose={() => setShowFillerModal(false)}
         onApply={handleRemoveFillers}
         matchingCounts={getFillerMatchCounts()}
+        fillerDurations={getFillerDurations()}
+        silenceCounts={getSilenceCounts()}
+        currentDurationMs={editedDurationMs}
       />
 
       <SilenceSettingsModal
