@@ -1475,6 +1475,26 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   const activeSilenceCount = editedWords.filter(ew => !ew.deleted && ew.word.wordType === 'silence').length;
   const deletedWordCount = editedWords.filter(ew => ew.deleted && ew.word.wordType !== 'silence').length;
   const deletedSilenceCount = editedWords.filter(ew => ew.deleted && ew.word.wordType === 'silence').length;
+  
+  // Calculate edited duration (sum of non-deleted words/silences)
+  const editedDurationMs = editedWords
+    .filter(ew => !ew.deleted)
+    .reduce((sum, ew) => sum + (ew.word.endMs - ew.word.startMs), 0);
+
+  // Format duration: seconds only if <90s, min:sec if <60min, hour:min:sec otherwise
+  const formatDuration = (ms: number): string => {
+    const totalSeconds = Math.round(ms / 1000);
+    if (totalSeconds < 90) {
+      return `${totalSeconds}s`;
+    }
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const seconds = totalSeconds % 60;
+    if (hours > 0) {
+      return `${hours}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+    }
+    return `${minutes}:${String(seconds).padStart(2, '0')}`;
+  };
 
   // Calculate filler word matches for modal (exclude silences)
   const getFillerMatchCounts = useCallback((): Map<string, number> => {
@@ -1704,7 +1724,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
             {transcript.speakers && (
               <span>{transcript.speakers.length} speakers</span>
             )}
-            <span>{Math.round(transcript.durationMs / 1000)}s</span>
+            <span>{formatDuration(editedDurationMs)}</span>
           </div>
         </div>
       </div>
