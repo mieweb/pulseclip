@@ -46,7 +46,7 @@
 ### 🚀 Environment Detection
 - **Check `.env` for `MYNAME`**: Before testing, check if `MYNAME` is defined in the server `.env` file
 - **If `MYNAME` is defined**: This indicates a production/proxy environment
-  - Run `npm run build` followed by `npm run start` to serve the built application
+  - Don't restart for UI changes; just build with `npm run build` in the client folder.  If you need to restart the server, just ask the user to do it.
   - Use the `MYNAME` URL (e.g., `https://pulseclip.os.mieweb.org/`) for all browser testing
   - Do NOT use `localhost` URLs for testing - the app is behind an nginx proxy
 - **If `MYNAME` is not defined**: Use development mode with `localhost:3000`
