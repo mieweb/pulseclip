@@ -1498,14 +1498,18 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     let handled = false;
 
     // Delete/Backspace - toggle deleted state for selection or cursor word
+    // When a selection exists, the anchor word's current state determines the action for all words
     if (e.key === 'Delete' || e.key === 'Backspace') {
       pushUndo();
       setEditedWords(prev => {
         const updated = [...prev];
         if (selection) {
-          // Toggle deleted state for all selected words
+          // Use the anchor word's state to determine action for all selected words
+          // If anchor is not deleted, delete all; if anchor is deleted, restore all
+          const anchorIndex = selectionAnchor ?? selection.start;
+          const targetDeletedState = !prev[anchorIndex].deleted;
           for (let i = selection.start; i <= selection.end; i++) {
-            updated[i] = { ...updated[i], deleted: !updated[i].deleted };
+            updated[i] = { ...updated[i], deleted: targetDeletedState };
           }
         } else {
           // Toggle deleted state for cursor word
