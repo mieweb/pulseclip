@@ -3,6 +3,7 @@ import { useEffect, useState, useCallback, useRef } from 'react';
 import type { Transcript, TranscriptWord, EditableWord, PlaybackSegment, PlaybackSpeed, SpeedMarker } from '../types';
 import { PLAYBACK_SPEEDS } from '../types';
 import { debug } from '../debug';
+import { AudioCrossfadeManager } from '../audio';
 import './TranscriptViewer.scss';
 
 /** Default filler words to remove */
@@ -995,6 +996,11 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   // Segment playback refs
   const playbackSegments = useRef<PlaybackSegment[]>([]);
   const currentSegmentIndex = useRef<number>(0);
+  
+  // Audio crossfade manager for smooth preview
+  const audioCrossfadeManager = useRef<AudioCrossfadeManager>(
+    new AudioCrossfadeManager({ fadeDurationMs: 25, debugMode: false })
+  );
 
   // Cut selection or word at cursor
   const handleCut = useCallback(() => {
@@ -1131,6 +1137,35 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     };
   }, [mediaRef]);
 
+  // Initialize audio crossfade manager on first user interaction
+  useEffect(() => {
+    const media = mediaRef.current;
+    if (!media) return;
+
+    const initAudio = () => {
+      if (!audioCrossfadeManager.current.isReady()) {
+        const success = audioCrossfadeManager.current.initialize(media);
+        if (success) {
+          debug('Audio', 'AudioCrossfadeManager initialized');
+        }
+      }
+    };
+
+    // Initialize on play (requires user interaction)
+    media.addEventListener('play', initAudio);
+    
+    return () => {
+      media.removeEventListener('play', initAudio);
+    };
+  }, [mediaRef]);
+
+  // Cleanup audio crossfade manager on unmount
+  useEffect(() => {
+    return () => {
+      audioCrossfadeManager.current.dispose();
+    };
+  }, []);
+
   useEffect(() => {
     const media = mediaRef.current;
     if (!media) return;
@@ -1148,7 +1183,14 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
             const nextSeg = playbackSegments.current[nextIndex];
             debug('Segment', `Jumping to segment ${nextIndex}: ${nextSeg.startMs}ms`);
             currentSegmentIndex.current = nextIndex;
-            media.currentTime = nextSeg.startMs / 1000;
+            
+            // Use crossfade if segments are non-contiguous
+            const isNonContiguous = currentSeg.endMs !== nextSeg.startMs;
+            if (isNonContiguous && audioCrossfadeManager.current.isReady()) {
+              audioCrossfadeManager.current.seekWithCrossfade(nextSeg.startMs / 1000, media);
+            } else {
+              media.currentTime = nextSeg.startMs / 1000;
+            }
           } else {
             // End of all segments
             debug('Segment', 'Sequence playback complete');
@@ -1173,7 +1215,12 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           
           if (nextNonDeleted) {
             debug('Skip', `Skipping deleted content, jumping to "${nextNonDeleted.word.text}" at ${nextNonDeleted.word.startMs}ms`);
-            media.currentTime = nextNonDeleted.word.startMs / 1000;
+            // Use crossfade when jumping over deleted content
+            if (audioCrossfadeManager.current.isReady()) {
+              audioCrossfadeManager.current.seekWithCrossfade(nextNonDeleted.word.startMs / 1000, media);
+            } else {
+              media.currentTime = nextNonDeleted.word.startMs / 1000;
+            }
           }
         }
       }
