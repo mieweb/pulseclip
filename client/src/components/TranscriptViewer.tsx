@@ -1,5 +1,5 @@
 import type { FC, RefObject } from 'react';
-import { useEffect, useState, useCallback, useRef } from 'react';
+import { useEffect, useState, useCallback, useRef, useMemo } from 'react';
 import type { Transcript, TranscriptWord, EditableWord, PlaybackSegment, PlaybackSpeed, SpeedMarker } from '../types';
 import { PLAYBACK_SPEEDS } from '../types';
 import { debug } from '../debug';
@@ -1328,6 +1328,29 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     debug('Edit', `${source} toggled "${ew.word.text}" to ${ew.deleted ? 'restored' : 'deleted'}`);
   }, [editedWords, pushUndo]);
 
+  // Toggle bleeped state for a word or selection
+  const toggleWordBleeped = useCallback((index: number | null, selection: { start: number; end: number } | null, source: string) => {
+    if (index === null && selection === null) return;
+    
+    pushUndo();
+    setEditedWords(prev => {
+      const updated = [...prev];
+      if (selection) {
+        const anchorIndex = selection.start;
+        const targetBleepedState = !prev[anchorIndex].bleeped;
+        for (let i = selection.start; i <= selection.end; i++) {
+          updated[i] = { ...updated[i], bleeped: targetBleepedState };
+        }
+        debug('Edit', `${source} toggled bleeped state for words ${selection.start}-${selection.end} to ${targetBleepedState}`);
+      } else if (index !== null) {
+        updated[index] = { ...updated[index], bleeped: !updated[index].bleeped };
+        debug('Edit', `${source} toggled "${prev[index]?.word.text}" bleeped state to ${!prev[index]?.bleeped}`);
+      }
+      return updated;
+    });
+    setHasEdits(true);
+  }, [pushUndo]);
+
   // Open word editor modal
   const openWordEditor = useCallback((index: number) => {
     setEditorWordIndex(index);
@@ -1543,24 +1566,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     }
     // 'B' key - toggle bleeped state for selection or cursor word
     else if (e.key === 'b' || e.key === 'B') {
-      pushUndo();
-      setEditedWords(prev => {
-        const updated = [...prev];
-        if (selection) {
-          // Use the anchor word's state to determine action for all selected words
-          const anchorIndex = selectionAnchor ?? selection.start;
-          const targetBleepedState = !prev[anchorIndex].bleeped;
-          for (let i = selection.start; i <= selection.end; i++) {
-            updated[i] = { ...updated[i], bleeped: targetBleepedState };
-          }
-        } else {
-          // Toggle bleeped state for cursor word
-          updated[cursorIndex] = { ...updated[cursorIndex], bleeped: !updated[cursorIndex].bleeped };
-        }
-        return updated;
-      });
-      setHasEdits(true);
-      debug('Edit', `Toggled bleeped state for ${selection ? `words ${selection.start}-${selection.end}` : `word ${cursorIndex}`}`);
+      toggleWordBleeped(cursorIndex, selection, 'Keyboard');
       handled = true;
     }
     // Cut - Cmd/Ctrl+X
@@ -1868,8 +1874,8 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     });
   }, [editedWords]);
 
-  // Get count and total duration of bleeped words
-  const getBleepedStats = useCallback((): { count: number; durationMs: number } => {
+  // Get count and total duration of bleeped words (memoized)
+  const bleepedStats = useMemo((): { count: number; durationMs: number } => {
     let count = 0;
     let durationMs = 0;
     for (const ew of editedWords) {
@@ -2153,8 +2159,8 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         fillerDurations={getFillerDurations()}
         silenceCounts={getSilenceCounts()}
         currentDurationMs={editedDurationMs}
-        bleepedCount={getBleepedStats().count}
-        bleepedDurationMs={getBleepedStats().durationMs}
+        bleepedCount={bleepedStats.count}
+        bleepedDurationMs={bleepedStats.durationMs}
       />
 
       <SilenceSettingsModal
@@ -2219,25 +2225,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
             </button>
             <button
               className="transcript-viewer__edit-btn"
-              onClick={() => {
-                if (cursorIndex !== null) {
-                  pushUndo();
-                  setEditedWords(prev => {
-                    const updated = [...prev];
-                    if (selection) {
-                      const anchorIndex = selectionAnchor ?? selection.start;
-                      const targetBleepedState = !prev[anchorIndex].bleeped;
-                      for (let i = selection.start; i <= selection.end; i++) {
-                        updated[i] = { ...updated[i], bleeped: targetBleepedState };
-                      }
-                    } else {
-                      updated[cursorIndex] = { ...updated[cursorIndex], bleeped: !updated[cursorIndex].bleeped };
-                    }
-                    return updated;
-                  });
-                  setHasEdits(true);
-                }
-              }}
+              onClick={() => toggleWordBleeped(cursorIndex, selection, 'Button')}
               title="Mark as bleeped expletive (B)"
             >
               Bleep <span className="transcript-viewer__shortcut">B</span>
