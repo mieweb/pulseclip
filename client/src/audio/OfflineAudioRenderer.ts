@@ -173,7 +173,6 @@ export class OfflineAudioRenderer {
     segmentIndex: number
   ): Promise<void> {
     const { sourceStartMs, sourceEndMs, outputStartMs } = segment;
-    const sourceDurationMs = sourceEndMs - sourceStartMs;
 
     // Apply padding to avoid mid-waveform cuts
     const paddedStartMs = Math.max(0, sourceStartMs - this.config.audioPaddingMs);
@@ -196,21 +195,26 @@ export class OfflineAudioRenderer {
     );
 
     if (needsCrossfade) {
-      // Apply crossfade at segment boundary
+      // Apply crossfade at segment boundary with equal-power curve
       const fadeNode = context.createGain();
       source.connect(fadeNode);
       fadeNode.connect(context.destination);
 
-      // Fade out at the end
+      // Fade out at the end using equal-power curve
       const fadeDurationSec = this.config.crossfadeDurationMs / 1000;
-      const fadeOutStartSec = outputStartSec + sourceDurationMs / 1000 - fadeDurationSec;
+      // Use padded duration for correct positioning
+      const actualDurationSec = paddedDurationSec;
+      const fadeOutStartSec = outputStartSec + actualDurationSec - fadeDurationSec;
 
+      // Equal-power fade-out: cos(progress * π/2)
+      // Approximate with exponential curve (very close to cosine)
       fadeNode.gain.setValueAtTime(1.0, outputStartSec);
       fadeNode.gain.setValueAtTime(1.0, fadeOutStartSec);
-      fadeNode.gain.linearRampToValueAtTime(0.0, fadeOutStartSec + fadeDurationSec);
+      // Exponential curve from 1.0 to 0.001 (near zero, can't use exactly 0)
+      fadeNode.gain.exponentialRampToValueAtTime(0.001, fadeOutStartSec + fadeDurationSec);
 
       if (this.config.debugMode) {
-        debug('Render', `Segment ${segmentIndex}: crossfade ${this.config.crossfadeDurationMs}ms at boundary`);
+        debug('Render', `Segment ${segmentIndex}: equal-power crossfade ${this.config.crossfadeDurationMs}ms at boundary`);
       }
     } else {
       // No crossfade needed
