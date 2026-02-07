@@ -1,7 +1,7 @@
 import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
-import { randomUUID } from 'crypto';
+import { randomUUID, createHash } from 'crypto';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'fs';
@@ -9,6 +9,7 @@ import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
 import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
+import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
 
 // Load environment variables
 dotenv.config();
@@ -67,6 +68,13 @@ const upload = multer({
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // Increased limit for base64 image uploads
 
+// TUS resumable upload router (must be before body parsing affects routes)
+app.use('/uploads', createTusRouter());
+
+// Run cleanup of stale TUS uploads on startup and every hour
+cleanupStaleUploads();
+setInterval(cleanupStaleUploads, 60 * 60 * 1000);
+
 // Serve artipod files
 app.use('/artipods', express.static(join(__dirname, '../artipods')));
 
@@ -87,15 +95,71 @@ app.get('/api/providers', (_req, res) => {
   res.json({ providers });
 });
 
+// Generate PulseCam deep link for mobile app integration
+app.get('/api/pulsecam/deeplink', (req, res) => {
+  // Determine the server URL from request headers
+  const protocol = req.headers['x-forwarded-proto'] || req.protocol;
+  const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
+  const serverUrl = `${protocol}://${host}`;
+  
+  // Optional token for authentication (could be used for user-specific uploads)
+  const token = req.query.token as string || randomUUID();
+  
+  const deeplink = generatePulseCamDeepLink(serverUrl, token);
+  
+  res.json({
+    deeplink,
+    serverUrl,
+    token,
+    appStoreLinks: {
+      ios: 'https://apps.apple.com/app/pulsecam/id6739983442',
+      android: 'https://play.google.com/store/apps/details?id=com.mieweb.pulse',
+    },
+  });
+});
+
 // Upload pulse (protected) - creates an artipod folder with UUID
+// Includes duplicate detection based on file checksum
 app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
 
   const artipodId = (req as any).artipodId;
-  const fileUrl = `/artipods/${artipodId}/${req.file.originalname}`;
   const localPath = join(__dirname, '../artipods', artipodId, req.file.originalname);
+  
+  // Calculate checksum for duplicate detection
+  const fileContent = readFileSync(localPath);
+  const checksum = createHash('sha256').update(fileContent).digest('hex');
+  
+  // Check for existing file with same checksum
+  const existing = findArtipodByChecksum(checksum);
+  if (existing) {
+    // Delete the newly created artipod folder since we already have this file
+    const newArtipodPath = join(__dirname, '../artipods', artipodId);
+    try {
+      rmSync(newArtipodPath, { recursive: true, force: true });
+    } catch (e) {
+      console.error('Failed to cleanup duplicate upload:', e);
+    }
+    
+    const fileUrl = `/artipods/${existing.artipodId}/${existing.filename}`;
+    return res.json({
+      success: true,
+      artipodId: existing.artipodId,
+      filename: existing.filename,
+      url: fileUrl,
+      localPath: join(__dirname, '../artipods', existing.artipodId, existing.filename),
+      size: req.file.size,
+      mimetype: req.file.mimetype,
+      duplicate: true,
+    });
+  }
+  
+  // Register the new checksum
+  registerChecksum(checksum, artipodId, req.file.originalname);
+  
+  const fileUrl = `/artipods/${artipodId}/${req.file.originalname}`;
 
   res.json({
     success: true,
@@ -105,6 +169,7 @@ app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
     localPath,
     size: req.file.size,
     mimetype: req.file.mimetype,
+    duplicate: false,
   });
 });
 
