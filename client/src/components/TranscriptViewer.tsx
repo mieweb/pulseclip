@@ -17,7 +17,7 @@ const DEFAULT_FILLER_WORDS = [
 interface FillerWordsModalProps {
   isOpen: boolean;
   onClose: () => void;
-  onApply: (fillerWords: string[], removeSilenceAbove: number | null) => void;
+  onApply: (fillerWords: string[], removeSilenceAbove: number | null, removeBleeped: boolean) => void;
   matchingCounts: Map<string, number>;
   /** Duration in ms for each filler word */
   fillerDurations: Map<string, number>;
@@ -25,15 +25,20 @@ interface FillerWordsModalProps {
   silenceCounts: { threshold: number; count: number; durationMs: number }[];
   /** Current total duration in ms */
   currentDurationMs: number;
+  /** Count of bleeped words */
+  bleepedCount: number;
+  /** Total duration of bleeped words in ms */
+  bleepedDurationMs: number;
 }
 
 /** Modal component for selecting filler words to remove */
-const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply, matchingCounts, fillerDurations, silenceCounts, currentDurationMs }) => {
+const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply, matchingCounts, fillerDurations, silenceCounts, currentDurationMs, bleepedCount, bleepedDurationMs }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedFillers, setSelectedFillers] = useState<Set<string>>(new Set(DEFAULT_FILLER_WORDS));
   const [customWord, setCustomWord] = useState('');
   const [removeSilence, setRemoveSilence] = useState(false);
   const [silenceThreshold, setSilenceThreshold] = useState(0.4); // Default 0.4s
+  const [removeBleeped, setRemoveBleeped] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
 
   // Format duration in seconds or mm:ss
@@ -97,7 +102,7 @@ const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply,
   const silenceDurationMs = silenceData.durationMs;
 
   const handleApply = () => {
-    onApply(Array.from(selectedFillers), removeSilence ? silenceThreshold : null);
+    onApply(Array.from(selectedFillers), removeSilence ? silenceThreshold : null, removeBleeped);
     onClose();
   };
 
@@ -109,12 +114,13 @@ const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply,
     setSelectedFillers(new Set());
   };
 
-  // Calculate total matches (filler words + silences)
+  // Calculate total matches (filler words + silences + bleeped)
   const fillerMatches = Array.from(selectedFillers).reduce(
     (sum, word) => sum + (matchingCounts.get(word) || 0),
     0
   );
-  const totalMatches = fillerMatches + silenceRemovalCount;
+  const bleepedMatches = removeBleeped ? bleepedCount : 0;
+  const totalMatches = fillerMatches + silenceRemovalCount + bleepedMatches;
 
   // Calculate time saved from filler words
   const fillerTimeSavedMs = Array.from(selectedFillers).reduce(
@@ -122,8 +128,8 @@ const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply,
     0
   );
   
-  // Total time saved (filler words + silences)
-  const totalTimeSavedMs = fillerTimeSavedMs + silenceDurationMs;
+  // Total time saved (filler words + silences + bleeped)
+  const totalTimeSavedMs = fillerTimeSavedMs + silenceDurationMs + (removeBleeped ? bleepedDurationMs : 0);
   const newDurationMs = currentDurationMs - totalTimeSavedMs;
 
   // Close on escape
@@ -209,6 +215,20 @@ const FillerWordsModal: FC<FillerWordsModalProps> = ({ isOpen, onClose, onApply,
           </select>
           {removeSilence && silenceRemovalCount > 0 && (
             <span className="filler-modal__silence-count">({silenceRemovalCount} silences)</span>
+          )}
+        </div>
+
+        <div className="filler-modal__bleeped-option">
+          <label className="filler-modal__bleeped-checkbox">
+            <input
+              type="checkbox"
+              checked={removeBleeped}
+              onChange={(e) => setRemoveBleeped(e.target.checked)}
+            />
+            <span>Remove expletives (bleeped words)</span>
+          </label>
+          {removeBleeped && bleepedCount > 0 && (
+            <span className="filler-modal__bleeped-count">({bleepedCount} bleeped words)</span>
           )}
         </div>
 
@@ -1521,6 +1541,28 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
       debug('Edit', `Toggled deleted state for ${selection ? `words ${selection.start}-${selection.end}` : `word ${cursorIndex}`}`);
       handled = true;
     }
+    // 'B' key - toggle bleeped state for selection or cursor word
+    else if (e.key === 'b' || e.key === 'B') {
+      pushUndo();
+      setEditedWords(prev => {
+        const updated = [...prev];
+        if (selection) {
+          // Use the anchor word's state to determine action for all selected words
+          const anchorIndex = selectionAnchor ?? selection.start;
+          const targetBleepedState = !prev[anchorIndex].bleeped;
+          for (let i = selection.start; i <= selection.end; i++) {
+            updated[i] = { ...updated[i], bleeped: targetBleepedState };
+          }
+        } else {
+          // Toggle bleeped state for cursor word
+          updated[cursorIndex] = { ...updated[cursorIndex], bleeped: !updated[cursorIndex].bleeped };
+        }
+        return updated;
+      });
+      setHasEdits(true);
+      debug('Edit', `Toggled bleeped state for ${selection ? `words ${selection.start}-${selection.end}` : `word ${cursorIndex}`}`);
+      handled = true;
+    }
     // Cut - Cmd/Ctrl+X
     else if ((e.metaKey || e.ctrlKey) && e.key === 'x') {
       handleCut();
@@ -1826,13 +1868,32 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
     });
   }, [editedWords]);
 
-  // Handle removing filler words and optionally silences above threshold
-  const handleRemoveFillers = useCallback((fillerWords: string[], removeSilenceAbove: number | null) => {
+  // Get count and total duration of bleeped words
+  const getBleepedStats = useCallback((): { count: number; durationMs: number } => {
+    let count = 0;
+    let durationMs = 0;
+    for (const ew of editedWords) {
+      if (ew.deleted) continue;
+      if (ew.bleeped) {
+        count++;
+        durationMs += ew.word.endMs - ew.word.startMs;
+      }
+    }
+    return { count, durationMs };
+  }, [editedWords]);
+
+  // Handle removing filler words and optionally silences above threshold and bleeped words
+  const handleRemoveFillers = useCallback((fillerWords: string[], removeSilenceAbove: number | null, removeBleeped: boolean) => {
     const fillerSet = new Set(fillerWords.map(f => f.toLowerCase()));
     const silenceThresholdMs = removeSilenceAbove !== null ? removeSilenceAbove * 1000 : null;
     
     const newEditedWords = editedWords.map(ew => {
       if (ew.deleted) return ew;
+      
+      // Check if it's a bleeped word that should be removed
+      if (removeBleeped && ew.bleeped) {
+        return { ...ew, deleted: true };
+      }
       
       // Check if it's a silence that should be removed
       if ((ew.word.wordType === 'silence' || ew.word.wordType === 'silence-newline') && silenceThresholdMs !== null) {
@@ -2092,6 +2153,8 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
         fillerDurations={getFillerDurations()}
         silenceCounts={getSilenceCounts()}
         currentDurationMs={editedDurationMs}
+        bleepedCount={getBleepedStats().count}
+        bleepedDurationMs={getBleepedStats().durationMs}
       />
 
       <SilenceSettingsModal
@@ -2157,6 +2220,31 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
             <button
               className="transcript-viewer__edit-btn"
               onClick={() => {
+                if (cursorIndex !== null) {
+                  pushUndo();
+                  setEditedWords(prev => {
+                    const updated = [...prev];
+                    if (selection) {
+                      const anchorIndex = selectionAnchor ?? selection.start;
+                      const targetBleepedState = !prev[anchorIndex].bleeped;
+                      for (let i = selection.start; i <= selection.end; i++) {
+                        updated[i] = { ...updated[i], bleeped: targetBleepedState };
+                      }
+                    } else {
+                      updated[cursorIndex] = { ...updated[cursorIndex], bleeped: !updated[cursorIndex].bleeped };
+                    }
+                    return updated;
+                  });
+                  setHasEdits(true);
+                }
+              }}
+              title="Mark as bleeped expletive (B)"
+            >
+              Bleep <span className="transcript-viewer__shortcut">B</span>
+            </button>
+            <button
+              className="transcript-viewer__edit-btn"
+              onClick={() => {
                 if (selection) {
                   handleCut();
                 } else if (cursorIndex !== null) {
@@ -2208,6 +2296,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
           const isCursor = index === cursorIndex;
           const isSelected = isWordSelected(index);
           const isDeleted = ew.deleted;
+          const isBleeped = ew.bleeped;
           const isInserted = ew.inserted;
           const isSilence = ew.word.wordType === 'silence' || ew.word.wordType === 'silence-newline';
           const isSilenceNewline = ew.word.wordType === 'silence-newline';
@@ -2236,6 +2325,7 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
               }${isCursor ? ' transcript-viewer__word--cursor' : ''
               }${isSelected ? ' transcript-viewer__word--selected' : ''
               }${isDeleted ? ' transcript-viewer__word--deleted' : ''
+              }${isBleeped ? ' transcript-viewer__word--bleeped' : ''
               }${isInserted ? ' transcript-viewer__word--inserted' : ''
               }${isSilence ? ' transcript-viewer__word--silence' : ''
               }${isSilenceNewline ? ' transcript-viewer__word--silence-newline' : ''
