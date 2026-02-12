@@ -95,12 +95,14 @@ app.get('/api/about', async (_req, res) => {
     // Try to get git commit info
     const { execSync } = await import('child_process');
     const commitHash = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+    const commitDate = execSync('git log -1 --format=%ci', { encoding: 'utf-8' }).trim();
     const commitUrl = `https://github.com/mieweb/pulseclip/commit/${commitHash}`;
     
     res.json({
       name: 'PulseClip',
       git: {
         commitHash,
+        commitDate,
         commitUrl,
       },
     });

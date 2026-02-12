@@ -20,6 +20,7 @@ interface SavedEditorState {
 /** Version info from server */
 interface VersionInfo {
   commitHash: string;
+  commitDate: string;
   commitUrl: string;
 }
 
@@ -71,6 +72,7 @@ function App() {
         if (data.git) {
           setVersionInfo({
             commitHash: data.git.commitHash,
+            commitDate: data.git.commitDate || '',
             commitUrl: data.git.commitUrl,
           });
         }
@@ -767,6 +769,30 @@ function App() {
             <a href="https://github.com/mieweb/pulseclip/issues/new" target="_blank" rel="noopener noreferrer" className="app__banner-link">
               Report Issue
             </a>
+            {versionInfo && (
+              <span className="app__banner-version">
+                <a
+                  href={versionInfo.commitUrl || '#'}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="app__banner-link app__banner-link--mono"
+                  title={`Commit: ${versionInfo.commitHash}`}
+                >
+                  {versionInfo.commitHash.slice(0, 7)}
+                </a>
+                {versionInfo.commitDate && (
+                  <a
+                    href="https://github.com/mieweb/pulseclip/blob/main/RELEASE_NOTES.md"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="app__banner-link"
+                    title="Release Notes"
+                  >
+                    {new Date(versionInfo.commitDate).toLocaleDateString()}
+                  </a>
+                )}
+              </span>
+            )}
           </nav>
         </header>
 
