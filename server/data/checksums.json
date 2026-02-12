@@ -11,6 +11,12 @@
       "artipodId": "cb6762d3-992b-4666-a0be-b635a5a68cf1",
       "filename": "video.mp4",
       "createdAt": "2026-02-07T16:17:11.630Z"
+    },
+    "65e08c3ce5bbc8b6cbe0ee6eb680f9483e54aa8338d50a17dee8bdf9c182478c": {
+      "checksum": "65e08c3ce5bbc8b6cbe0ee6eb680f9483e54aa8338d50a17dee8bdf9c182478c",
+      "artipodId": "6794e000-01a2-4bdd-b5d6-0c0dfaf4dce3",
+      "filename": "test.mov",
+      "createdAt": "2026-02-09T06:47:08.842Z"
     }
   }
 }

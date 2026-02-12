@@ -144,3 +144,4 @@ server/cache/
 server/dist/
 client/dist/
 test.mov
+server/data/checksums.json
