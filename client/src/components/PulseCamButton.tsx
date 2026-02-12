@@ -27,7 +27,7 @@ export const PulseCamButton: FC<PulseCamButtonProps> = ({ onError }) => {
   const [isMobile, setIsMobile] = useState(false);
 
   useEffect(() => {
-    // Detect if user is on mobile
+    // Detect if user is on mobile and platform
     const checkMobile = () => {
       const userAgent = navigator.userAgent.toLowerCase();
       return /iphone|ipad|ipod|android/.test(userAgent);

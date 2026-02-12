@@ -1,25 +1,25 @@
 # Release Notes
 
-**Current Version:** 82d7151  
-**Last Updated:** 2026-02-07 21:57:18 +0000  
+**Current Version:** 9587792  
+**Last Updated:** 2026-02-12 22:44:44 +0000  
 **Author:** Doug Horner
 
 ## Latest Commit
 
-feat: Add PulseCam integration with TUS resumable uploads
+feat: Enhance mobile detection and add API for about/version info
 
 ## Recent Changes
 
-- **feat: Add PulseCam integration with TUS resumable uploads** (82d7151) - Doug Horner, 0 seconds ago
-- **feat: create release notes file with current version and recent changes** (aa98fd3) - Doug Horner, 22 hours ago
-- **fix: selection delete uses anchor word state for all words in range** (00a485b) - Doug Horner, 30 hours ago
-- **feat: enhance filler words modal with sorting, silence removal, and time saved** (6d8fb54) - Doug Horner, 32 hours ago
-- **feat: add playback speed controls with word-level speed markers** (3cefb8e) - Doug Horner, 33 hours ago
-- **Add Open Graph meta tags for social sharing previews** (0656b78) - Doug Horner, 33 hours ago
-- **feat: show edited duration in header (excluding deleted words/silences)** (1031614) - Doug Horner, 33 hours ago
-- **Add silence settings modal with configurable thresholds** (8db7bd7) - Doug Horner, 34 hours ago
-- **Simplify transcript viewer header UI** (97658d3) - Doug Horner, 35 hours ago
-- **Move toolbar buttons to icon-based design** (a14c998) - Doug Horner, 35 hours ago
+- **feat: Enhance mobile detection and add API for about/version info** (9587792) - Doug Horner, 0 seconds ago
+- **Resolve merge conflict in checksums.json** (8f49820) - Doug Horner, 32 minutes ago
+- **Merge pull request #7 from mieweb/feature/pulsecam-integration** (10b5b3c) - Doug Horner, 34 minutes ago
+- **feat: Add PulseCam integration with TUS resumable uploads** (487b04d) - Doug Horner, 5 days ago
+- **feat: create release notes file with current version and recent changes** (aa98fd3) - Doug Horner, 6 days ago
+- **fix: selection delete uses anchor word state for all words in range** (00a485b) - Doug Horner, 6 days ago
+- **feat: enhance filler words modal with sorting, silence removal, and time saved** (6d8fb54) - Doug Horner, 6 days ago
+- **feat: add playback speed controls with word-level speed markers** (3cefb8e) - Doug Horner, 6 days ago
+- **Add Open Graph meta tags for social sharing previews** (0656b78) - Doug Horner, 6 days ago
+- **feat: show edited duration in header (excluding deleted words/silences)** (1031614) - Doug Horner, 6 days ago
 
 ---
 

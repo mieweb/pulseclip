@@ -89,6 +89,30 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok' });
 });
 
+// About/version info
+app.get('/api/about', async (_req, res) => {
+  try {
+    // Try to get git commit info
+    const { execSync } = await import('child_process');
+    const commitHash = execSync('git rev-parse HEAD', { encoding: 'utf-8' }).trim();
+    const commitUrl = `https://github.com/mieweb/pulseclip/commit/${commitHash}`;
+    
+    res.json({
+      name: 'PulseClip',
+      git: {
+        commitHash,
+        commitUrl,
+      },
+    });
+  } catch (error) {
+    // Fallback if git not available
+    res.json({
+      name: 'PulseClip',
+      git: null,
+    });
+  }
+});
+
 // Get available providers
 app.get('/api/providers', (_req, res) => {
   const providers = providerRegistry.list();
@@ -112,7 +136,7 @@ app.get('/api/pulsecam/deeplink', (req, res) => {
     serverUrl,
     token,
     appStoreLinks: {
-      ios: 'https://apps.apple.com/app/pulsecam/id6739983442',
+      ios: 'https://apps.apple.com/us/app/pulse-cam/id6748621024',
       android: 'https://play.google.com/store/apps/details?id=com.mieweb.pulse',
     },
   });
