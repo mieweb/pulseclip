@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { FileUpload } from './components/FileUpload';
+import { PulseCamButton } from './components/PulseCamButton';
 import { MediaPlayer } from './components/MediaPlayer';
 import { TranscriptViewer } from './components/TranscriptViewer';
 import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
@@ -15,6 +16,14 @@ interface SavedEditorState {
   undoStack: EditableWord[][];
   savedAt: string;
 }
+
+/** Version info from server */
+interface VersionInfo {
+  commitHash: string;
+  commitUrl: string;
+}
+
+declare const __BUILD_COMMIT_HASH__: string | undefined;
 
 function App() {
   const { artipodId: urlArtipodId } = useParams<{ artipodId: string }>();
@@ -48,10 +57,26 @@ function App() {
   const [savedEditorState, setSavedEditorState] = useState<SavedEditorState | null>(null);
   const [cursorTimestampMs, setCursorTimestampMs] = useState<number | null>(null);
   const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
+  const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
   const contentRef = useRef<HTMLElement>(null);
   const hasAutoTranscribed = useRef(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // Fetch version info on mount
+  useEffect(() => {
+    fetch('/api/about')
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.git) {
+          setVersionInfo({
+            commitHash: data.git.commitHash,
+            commitUrl: data.git.commitUrl,
+          });
+        }
+      })
+      .catch((err) => console.error('Failed to fetch version info:', err));
+  }, []);
 
   // Determine current view state
   const viewState: ViewState = loading
@@ -776,8 +801,17 @@ function App() {
           {/* Compact upload area */}
           <section className="app__upload-section">
             <h2 className="app__upload-heading">Upload Your Own</h2>
-            <div className="app__upload-container">
-              <FileUpload onFileUploaded={handleFileUploaded} disabled={false} apiKey={apiKey} onAuthError={handleAuthError} />
+            <div className="app__upload-options">
+              <div className="app__pulsecam-container">
+                <PulseCamButton onError={(err) => setError(err)} />
+                <p className="app__pulsecam-hint">Record directly from your phone</p>
+              </div>
+              <div className="app__upload-divider">
+                <span>or</span>
+              </div>
+              <div className="app__upload-container">
+                <FileUpload onFileUploaded={handleFileUploaded} disabled={false} apiKey={apiKey} onAuthError={handleAuthError} />
+              </div>
             </div>
           </section>
 
@@ -828,6 +862,52 @@ function App() {
           <span className="app__filename" title={mediaFilename}>
             {mediaFilename}
           </span>
+          {versionInfo?.commitHash && (
+            (() => {
+              const serverHash = versionInfo.commitHash.slice(0, 7);
+              const clientHash = typeof __BUILD_COMMIT_HASH__ !== 'undefined' && __BUILD_COMMIT_HASH__ 
+                ? __BUILD_COMMIT_HASH__.slice(0, 7) 
+                : null;
+              const hashesMatch = clientHash === serverHash;
+              
+              if (hashesMatch || !clientHash) {
+                return (
+                  <a 
+                    href={versionInfo.commitUrl || '#'} 
+                    target="_blank" 
+                    rel="noopener noreferrer" 
+                    className="app__toolbar-version"
+                    title={`Version: ${serverHash}`}
+                  >
+                    {serverHash}
+                  </a>
+                );
+              } else {
+                return (
+                  <div className="app__toolbar-versions">
+                    <a 
+                      href={`https://github.com/mieweb/pulseclip/commit/${clientHash}`}
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="app__toolbar-version app__toolbar-version--client"
+                      title={`Client version: ${clientHash}`}
+                    >
+                      C:{clientHash}
+                    </a>
+                    <a 
+                      href={versionInfo.commitUrl || '#'} 
+                      target="_blank" 
+                      rel="noopener noreferrer" 
+                      className="app__toolbar-version app__toolbar-version--server"
+                      title={`Server version: ${serverHash}`}
+                    >
+                      S:{serverHash}
+                    </a>
+                  </div>
+                );
+              }
+            })()
+          )}
         </div>
 
         <div className="app__toolbar-right">

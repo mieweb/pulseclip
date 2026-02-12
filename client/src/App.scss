@@ -83,14 +83,101 @@
   color: #888;
   font-size: 14px;
   font-weight: 500;
-  margin: 0 0 12px 0;
+  margin: 0 0 16px 0;
   text-transform: uppercase;
   letter-spacing: 0.5px;
 }
 
-.app__upload-container {
-  max-width: 400px;
+.app__upload-options {
+  display: flex;
+  align-items: stretch;
+  gap: 24px;
+  max-width: 700px;
   margin: 0 auto;
+  
+  @media (max-width: 700px) {
+    flex-direction: column;
+    align-items: center;
+    gap: 16px;
+  }
+}
+
+.app__upload-container {
+  flex: 1;
+  max-width: 280px;
+  min-width: 200px;
+  
+  // Match height with PulseCam container
+  .file-upload__dropzone {
+    height: 100%;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+  }
+}
+
+.app__upload-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #555;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1px;
+  
+  @media (min-width: 701px) {
+    flex-direction: column;
+    
+    &::before,
+    &::after {
+      content: '';
+      width: 1px;
+      height: 40px;
+      background: rgba(255, 255, 255, 0.15);
+    }
+    
+    span {
+      padding: 12px 0;
+    }
+  }
+  
+  @media (max-width: 700px) {
+    width: 100%;
+    max-width: 300px;
+    
+    &::before,
+    &::after {
+      content: '';
+      flex: 1;
+      height: 1px;
+      background: rgba(255, 255, 255, 0.15);
+    }
+    
+    span {
+      padding: 0 16px;
+    }
+  }
+}
+
+.app__pulsecam-container {
+  flex: 1;
+  max-width: 280px;
+  min-width: 200px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  padding: 24px 16px;
+  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.app__pulsecam-hint {
+  margin: 0;
+  font-size: 12px;
+  color: #666;
 }
 
 // Features section
@@ -312,6 +399,45 @@
   
   @media (max-width: 600px) {
     max-width: 120px;
+  }
+}
+
+.app__toolbar-version {
+  color: #666;
+  text-decoration: none;
+  font-size: 10px;
+  font-family: monospace;
+  padding: 2px 5px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 3px;
+  transition: all 0.2s;
+
+  &:hover {
+    color: #4fc3f7;
+    background: rgba(79, 195, 247, 0.1);
+  }
+}
+
+.app__toolbar-versions {
+  display: flex;
+  gap: 3px;
+}
+
+.app__toolbar-version--client {
+  color: #81c784;
+  
+  &:hover {
+    color: #a5d6a7;
+    background: rgba(129, 199, 132, 0.1);
+  }
+}
+
+.app__toolbar-version--server {
+  color: #ffb74d;
+  
+  &:hover {
+    color: #ffcc80;
+    background: rgba(255, 183, 77, 0.1);
   }
 }
 
