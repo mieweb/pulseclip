@@ -1,25 +1,25 @@
 # Release Notes
 
-**Current Version:** 85e04c1  
-**Last Updated:** 2026-02-12 22:49:09 +0000  
+**Current Version:** fdd5390  
+**Last Updated:** 2026-02-14 02:20:28 +0000  
 **Author:** Doug Horner
 
 ## Latest Commit
 
-feat: Add commit date to version info and display in banner
+feat: Add state management for edits loading and update viewing condition
 
 ## Recent Changes
 
-- **feat: Add commit date to version info and display in banner** (85e04c1) - Doug Horner, 0 seconds ago
-- **feat: Enhance mobile detection and add API for about/version info** (c9801e8) - Doug Horner, 4 minutes ago
-- **Resolve merge conflict in checksums.json** (8f49820) - Doug Horner, 36 minutes ago
-- **Merge pull request #7 from mieweb/feature/pulsecam-integration** (10b5b3c) - Doug Horner, 38 minutes ago
-- **feat: Add PulseCam integration with TUS resumable uploads** (487b04d) - Doug Horner, 5 days ago
-- **feat: create release notes file with current version and recent changes** (aa98fd3) - Doug Horner, 6 days ago
-- **fix: selection delete uses anchor word state for all words in range** (00a485b) - Doug Horner, 6 days ago
-- **feat: enhance filler words modal with sorting, silence removal, and time saved** (6d8fb54) - Doug Horner, 6 days ago
-- **feat: add playback speed controls with word-level speed markers** (3cefb8e) - Doug Horner, 6 days ago
-- **Add Open Graph meta tags for social sharing previews** (0656b78) - Doug Horner, 6 days ago
+- **feat: Add state management for edits loading and update viewing condition** (fdd5390) - Doug Horner, 0 seconds ago
+- **feat: Add commit date to version info and display in banner** (b31d44c) - Doug Horner, 28 hours ago
+- **feat: Enhance mobile detection and add API for about/version info** (c9801e8) - Doug Horner, 28 hours ago
+- **Resolve merge conflict in checksums.json** (8f49820) - Doug Horner, 28 hours ago
+- **Merge pull request #7 from mieweb/feature/pulsecam-integration** (10b5b3c) - Doug Horner, 28 hours ago
+- **feat: Add PulseCam integration with TUS resumable uploads** (487b04d) - Doug Horner, 6 days ago
+- **feat: create release notes file with current version and recent changes** (aa98fd3) - Doug Horner, 7 days ago
+- **fix: selection delete uses anchor word state for all words in range** (00a485b) - Doug Horner, 7 days ago
+- **feat: enhance filler words modal with sorting, silence removal, and time saved** (6d8fb54) - Doug Horner, 8 days ago
+- **feat: add playback speed controls with word-level speed markers** (3cefb8e) - Doug Horner, 8 days ago
 
 ---
 

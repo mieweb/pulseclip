@@ -56,6 +56,7 @@ function App() {
   const [splitPosition, setSplitPosition] = useState(50); // Percentage for media pane height
   const [isDragging, setIsDragging] = useState(false);
   const [savedEditorState, setSavedEditorState] = useState<SavedEditorState | null>(null);
+  const [editsLoaded, setEditsLoaded] = useState(false);
   const [cursorTimestampMs, setCursorTimestampMs] = useState<number | null>(null);
   const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
@@ -185,9 +186,11 @@ function App() {
   useEffect(() => {
     if (!artipodId) {
       setSavedEditorState(null);
+      setEditsLoaded(true);
       return;
     }
     
+    setEditsLoaded(false);
     fetch(`/api/artipod/${artipodId}/edits`)
       .then((res) => res.json())
       .then((data) => {
@@ -205,7 +208,8 @@ function App() {
       .catch((err) => {
         console.error('Failed to load saved edits:', err);
         setSavedEditorState(null);
-      });
+      })
+      .finally(() => setEditsLoaded(true));
   }, [artipodId]);
 
   // Save editor state (debounced)
@@ -1101,7 +1105,7 @@ function App() {
             </div>
           )}
 
-          {viewState === 'viewing' && transcriptionResult && (
+          {viewState === 'viewing' && transcriptionResult && editsLoaded && (
             <TranscriptViewer
                 transcript={transcriptionResult.transcript}
                 mediaRef={mediaRef}
