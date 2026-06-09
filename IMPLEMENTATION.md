@@ -153,7 +153,13 @@ client/
 │   ├── components/
 │   │   ├── FileUpload.tsx       # Drag-and-drop upload
 │   │   ├── MediaPlayer.tsx      # Audio/video player
-│   │   └── TranscriptViewer.tsx # Interactive transcript
+│   │   └── TranscriptViewer.tsx # Interactive transcript with editing
+│   ├── audio/                   # Audio crossfade rendering (NEW)
+│   │   ├── AudioCrossfadeManager.ts  # Realtime preview smoothing
+│   │   ├── OfflineAudioRenderer.ts   # Offline audio composition
+│   │   ├── fadeUtils.ts              # Fade curve utilities
+│   │   ├── index.ts                  # Public API
+│   │   └── README.md                 # Comprehensive documentation
 │   ├── App.tsx                  # Main application
 │   ├── types.ts                 # TypeScript types
 │   ├── main.tsx                 # Entry point
@@ -169,6 +175,8 @@ client/
 - SCSS for styling
 - Vite for fast development
 - Proxy to server API
+- **Web Audio API integration for crossfades** (NEW)
+- **Offline audio rendering with OfflineAudioContext** (NEW)
 
 ### Provider Implementation
 
@@ -189,6 +197,48 @@ normalize(transcript: any): Transcript {
   // 5. Return normalized + raw
 }
 ```
+
+### Audio Crossfade Rendering (NEW)
+
+**Overview:**
+PulseClip's word-level editing workflow creates hard audio cuts at segment boundaries. The audio crossfade system eliminates clicks and pops with two complementary approaches:
+
+1. **Realtime Preview Smoothing** - Fade-around-seek for instant playback
+2. **Offline Audio Composition** - True crossfades for export quality
+
+**Implementation:**
+
+**AudioCrossfadeManager:**
+- Routes `<video>` audio through Web Audio API
+- Inserts GainNode for realtime fade control
+- Applies 25ms fade-out/fade-in around seek operations
+- Only fades at non-contiguous segment boundaries
+- Automatic initialization on first playback
+
+**OfflineAudioRenderer:**
+- Uses OfflineAudioContext for offline rendering
+- Decodes source audio into AudioBuffer
+- Schedules timeline segments with proper timing
+- Applies equal-power crossfades (cos/sin curves)
+- Supports configurable fade duration and audio padding
+- Exports as WAV for final delivery
+
+**Key Features:**
+- ✅ Automatic detection of segment boundaries
+- ✅ Equal-power crossfade curves for smooth transitions
+- ✅ Configurable fade duration (default 25-30ms)
+- ✅ Optional audio padding to avoid mid-waveform cuts
+- ✅ No latency impact on preview playback
+- ✅ WAV export for server-side muxing
+- ✅ Comprehensive API and documentation
+
+**Integration:**
+- Transparent integration in TranscriptViewer
+- Zero configuration required for basic use
+- Extensible API for advanced control
+- Debug mode for troubleshooting
+
+See [`client/src/audio/README.md`](client/src/audio/README.md) for detailed documentation.
 
 ## Build & Quality Metrics
 
