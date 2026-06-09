@@ -24,6 +24,8 @@ export interface EditableWord {
   deleted: boolean;
   /** Whether this word was inserted (pasted from clipboard) */
   inserted?: boolean;
+  /** Whether this word is marked as bleeped (expletive) */
+  bleeped?: boolean;
 }
 
 /**
