@@ -36,6 +36,7 @@ function App() {
   const [artipodId, setArtipodId] = useState<string>('');
   const [mediaFilename, setMediaFilename] = useState<string>('');
   const [transcribing, setTranscribing] = useState(false);
+  const [transcribingAsync, setTranscribingAsync] = useState(false);
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<'transcript' | 'data'>('transcript');
@@ -344,6 +345,7 @@ function App() {
     if (!mediaUrl || !selectedProvider) return;
 
     setTranscribing(true);
+    setTranscribingAsync(false);
     setTranscriptionResult(null);
     setError(null);
 
@@ -372,6 +374,35 @@ function App() {
       if (response.status === 401) {
         setShowApiKeyModal(true);
         throw new Error('API key required');
+      }
+
+      // Handle async transcription (large files)
+      if (response.status === 202) {
+        const asyncData = await response.json();
+        const jobId = asyncData.jobId;
+        setTranscribingAsync(true);
+        // Poll for completion
+        const pollInterval = 5000; // 5 seconds
+        const maxAttempts = 360; // 30 minutes max
+        let attempts = 0;
+        while (attempts < maxAttempts) {
+          await new Promise(resolve => setTimeout(resolve, pollInterval));
+          attempts++;
+          const statusRes = await fetch(`/api/transcribe/status/${jobId}`);
+          if (statusRes.ok) {
+            const statusData = await statusRes.json();
+            if (statusData.status === 'processing') {
+              continue; // Still processing, keep polling
+            }
+            // Completed - statusData is the transcription result
+            setTranscriptionResult(statusData);
+            return;
+          } else {
+            const errData = await statusRes.json().catch(() => ({}));
+            throw new Error(errData.message || 'Transcription failed');
+          }
+        }
+        throw new Error('Transcription timed out. Please try again later.');
       }
 
       if (!response.ok) {
@@ -968,7 +999,11 @@ function App() {
           )}
 
           {viewState === 'transcribing' && (
-            <span className="app__status">Transcribing...</span>
+            <span className="app__status">
+              {transcribingAsync
+                ? 'Transcribing large file — this may take several minutes...'
+                : 'Transcribing...'}
+            </span>
           )}
 
           {viewState === 'viewing' && (

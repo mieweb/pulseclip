@@ -14,6 +14,18 @@ import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArt
 // Load environment variables
 dotenv.config();
 
+// --- Async transcription job store ---
+interface TranscriptionJob {
+  id: string;
+  status: 'processing' | 'completed' | 'error';
+  result?: any;
+  error?: string;
+  createdAt: number;
+}
+const transcriptionJobs = new Map<string, TranscriptionJob>();
+// File size threshold (in bytes) above which transcription runs async (100MB)
+const ASYNC_TRANSCRIPTION_THRESHOLD = 100 * 1024 * 1024;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -254,6 +266,51 @@ app.post('/api/transcribe', async (req, res) => {
       }
     }
 
+    // Check file size to determine sync vs async transcription
+    const fileSize = existsSync(localPath) ? statSync(localPath).size : 0;
+
+    if (fileSize > ASYNC_TRANSCRIPTION_THRESHOLD) {
+      // Large file: run transcription asynchronously
+      const jobId = randomUUID();
+      transcriptionJobs.set(jobId, { id: jobId, status: 'processing', createdAt: Date.now() });
+
+      console.log(`Large file (${(fileSize / 1024 / 1024).toFixed(1)}MB) - starting async transcription job ${jobId}`);
+      console.log(`Using local file: ${localPath}`);
+
+      // Fire and forget - transcription runs in background
+      provider.transcribe(localPath, options).then(async (result) => {
+        console.log(`Async transcription complete for job ${jobId}. Words: ${result.normalized.words.length}`);
+        await cacheTranscription(localPath, providerId, result);
+        transcriptionJobs.set(jobId, {
+          id: jobId,
+          status: 'completed',
+          createdAt: transcriptionJobs.get(jobId)!.createdAt,
+          result: {
+            success: true,
+            cached: false,
+            provider: { id: provider.id, displayName: provider.displayName },
+            transcript: result.normalized,
+            raw: result.raw,
+          },
+        });
+      }).catch((err) => {
+        console.error(`Async transcription failed for job ${jobId}:`, err);
+        transcriptionJobs.set(jobId, {
+          id: jobId,
+          status: 'error',
+          createdAt: transcriptionJobs.get(jobId)!.createdAt,
+          error: err instanceof Error ? err.message : 'Unknown error',
+        });
+      });
+
+      return res.status(202).json({
+        success: true,
+        status: 'processing',
+        jobId,
+        message: 'This file is large and may take several minutes to transcribe. You can check back shortly.',
+      });
+    }
+
     console.log(`Starting transcription with ${provider.displayName}...`);
     console.log(`Using local file: ${localPath}`);
     const result = await provider.transcribe(localPath, options);
@@ -279,6 +336,30 @@ app.post('/api/transcribe', async (req, res) => {
       message: error instanceof Error ? error.message : 'Unknown error',
     });
   }
+});
+
+// Poll for async transcription job status
+app.get('/api/transcribe/status/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = transcriptionJobs.get(jobId);
+
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  if (job.status === 'completed') {
+    // Clean up after delivering result
+    transcriptionJobs.delete(jobId);
+    return res.json(job.result);
+  }
+
+  if (job.status === 'error') {
+    transcriptionJobs.delete(jobId);
+    return res.status(500).json({ error: 'Transcription failed', message: job.error });
+  }
+
+  // Still processing
+  res.json({ status: 'processing', jobId });
 });
 
 // Helper to find media file in artipod folder
