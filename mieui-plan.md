@@ -88,15 +88,17 @@ Notes (2026-07-16):
 
 ## Milestone 4 — `TranscriptView` (read-only)
 
-- [ ] Extract read-only rendering from `TranscriptViewer.tsx` into `ui-staging/TranscriptView/`
-- [ ] Word-level mode: click-to-seek, current-word highlight follow, silence rendering
-- [ ] Segment-level mode (osheet parity): timestamp + speaker + text rows, click-to-seek + play
-- [ ] Same-speaker segment merging (osheet `formatTranscriptText` behavior) as a display option
-- [ ] Diarization: `speakers` prop with display names; `speakerLabels` mapping / render prop (Clinician/Patient etc.)
-- [ ] Toolbar/action slot so hosts can add copy / re-transcribe / remove buttons (osheet pattern)
-- [ ] Playback speed control + speed markers
-- [ ] Tokens/cva styling; ARIA (`aria-live` for follow mode, keyboard nav)
-- [ ] Swap into pulseclip for the non-editing view path
+- [x] Extract read-only rendering from `TranscriptViewer.tsx` into `ui-staging/TranscriptView/`
+- [x] Word-level mode: click-to-seek, current-word highlight follow, silence rendering
+- [x] Segment-level mode (osheet parity): timestamp + speaker + text rows, click-to-seek + play
+- [x] Same-speaker segment merging (osheet `formatTranscriptText` behavior) as a display option
+- [x] Diarization: `speakers` prop with display names; `speakerLabels` mapping / render prop (Clinician/Patient etc.)
+- [x] Toolbar/action slot so hosts can add copy / re-transcribe / remove buttons (osheet pattern)
+- [ ] Playback speed control + speed markers → deferred to M5 (`SpeedMarker` depends on `EditableWord` state)
+- [x] Tokens/cva styling; ARIA (`aria-current`, keyboard nav, list semantics)
+- [ ] Swap into pulseclip → happens in M5 (the app has no pure non-editing path; `TranscriptViewer` couples viewing+editing, so the swap lands when `MediaEditor` replaces it)
+
+Notes (2026-07-16): component is controlled — `currentTimeMs` in, `onSeek(timeMs)` out; no media coupling at all. `granularity` auto-resolves (segments → segment mode). Auto-scroll suppressed while hovering.
 
 ## Milestone 5 — `useTranscriptEdits` + `MediaEditor`
 
