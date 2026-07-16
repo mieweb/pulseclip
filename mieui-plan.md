@@ -62,10 +62,12 @@ Notes (2026-07-16):
 
 ## Milestone 2 — Staging skeleton + shared types
 
-- [ ] Create `client/src/ui-staging/` mirroring ui's `src/components/` layout
-- [ ] Port transcript schema into `ui-staging/types/`: `Transcript`, `TranscriptWord`, `TranscriptSegment`, `Speaker`, `WordType`, `EditableWord`, `PlaybackSegment`
-- [ ] Reconcile schema for osheet needs: segment-level rendering + `speakerId`/`speakers[]` diarization (osheet uses seconds + `speaker` string — adapter is osheet's job, ms is canonical)
-- [ ] Repoint `client/src/types.ts` consumers to staging types (re-export shim OK)
+- [x] Create `client/src/ui-staging/` mirroring ui's `src/components/` layout
+- [x] Port transcript schema into `ui-staging/types/`: `Transcript`, `TranscriptWord`, `TranscriptSegment`, `Speaker`, `WordType`, `EditableWord`, `PlaybackSegment`
+- [x] Reconcile schema for osheet needs: segment-level rendering + `speakerId`/`speakers[]` diarization (osheet uses seconds + `speaker` string — adapter is osheet's job, ms is canonical)
+- [x] Repoint `client/src/types.ts` consumers to staging types (re-export shim OK)
+
+Notes (2026-07-16): schema in `client/src/ui-staging/types/transcript.ts`; `client/src/types.ts` is now a re-export shim + app-only types (`Provider`, `TranscriptionResult`, `FeaturedPulse`). `ui-staging/README.md` documents the lift rules.
 
 ## Milestone 3 — `MediaPlayer`
 
