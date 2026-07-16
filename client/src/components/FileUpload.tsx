@@ -1,5 +1,5 @@
-import type { FC, ChangeEvent, DragEvent } from 'react';
-import { useState, useCallback } from 'react';
+import type { FC, ChangeEvent, DragEvent, MouseEvent } from 'react';
+import { useState, useCallback, useRef } from 'react';
 import './FileUpload.scss';
 
 interface FileUploadProps {
@@ -13,6 +13,7 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiK
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -81,6 +82,13 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiK
     }
   }, []);
 
+  const handleZoneClick = useCallback((e: MouseEvent<HTMLDivElement>) => {
+    if (disabled || uploading) return;
+    // Clicks on the label already open the file dialog natively
+    if ((e.target as HTMLElement).closest('.file-upload__button')) return;
+    fileInputRef.current?.click();
+  }, [disabled, uploading]);
+
   return (
     <div className="file-upload">
       <div
@@ -88,6 +96,7 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiK
         onDragOver={handleDragOver}
         onDragLeave={handleDragLeave}
         onDrop={handleDrop}
+        onClick={handleZoneClick}
       >
         {uploading ? (
           <div className="file-upload__status">
@@ -103,6 +112,7 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiK
             <p className="file-upload__hint">or</p>
             <label className="file-upload__button">
               <input
+                ref={fileInputRef}
                 type="file"
                 accept="audio/*,video/*"
                 onChange={handleFileSelect}
