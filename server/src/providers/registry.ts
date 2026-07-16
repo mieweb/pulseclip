@@ -1,5 +1,5 @@
 import { existsSync } from 'fs';
-import { isAbsolute, join, dirname } from 'path';
+import { isAbsolute, join, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { TranscriptionProvider } from '../types/transcription.js';
 import { AssemblyAIProvider } from './assemblyai.js';
@@ -36,26 +36,34 @@ export function initializeProviders(): ProviderRegistry {
     console.warn('ASSEMBLYAI_API_KEY not found in environment');
   }
 
-  // Register local Whisper if a model path is configured
-  // (requires whisper-cpp and ffmpeg installed - see README)
+  // Register local Whisper if model path(s) are configured - comma-separated
+  // paths each register as their own provider, so the dropdown doubles as a
+  // model picker. (Requires whisper-cpp and ffmpeg installed - see README.)
   const whisperModelEnv = process.env.WHISPER_MODEL_PATH;
   if (whisperModelEnv) {
     // Resolve relative paths against the server package root (parent of src/ or dist/)
     const serverRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
-    const modelPath = isAbsolute(whisperModelEnv)
-      ? whisperModelEnv
-      : join(serverRoot, whisperModelEnv);
+    const modelEntries = whisperModelEnv.split(',').map((s) => s.trim()).filter(Boolean);
 
-    if (existsSync(modelPath)) {
+    for (const entry of modelEntries) {
+      const modelPath = isAbsolute(entry) ? entry : join(serverRoot, entry);
+
+      if (!existsSync(modelPath)) {
+        console.warn(`WHISPER_MODEL_PATH entry not found, skipping: ${modelPath}`);
+        continue;
+      }
+
+      // "ggml-base.en.bin" -> "base.en"
+      const modelName = basename(modelPath).replace(/^ggml-/, '').replace(/\.bin$/, '');
       registry.register(
         new WhisperProvider({
           modelPath,
+          id: modelEntries.length > 1 ? `whisper-${modelName}` : 'whisper',
+          displayName: `Whisper (${modelName})`,
           binPath: process.env.WHISPER_BIN,
           language: process.env.WHISPER_LANGUAGE,
         })
       );
-    } else {
-      console.warn(`WHISPER_MODEL_PATH set but model not found: ${modelPath}`);
     }
   }
 
