@@ -2,7 +2,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { FileUpload } from './components/FileUpload';
 import { PulseCamButton } from './components/PulseCamButton';
-import { MediaPlayer } from './components/MediaPlayer';
+import { MediaPlayer } from './ui-staging/MediaPlayer';
 import { TranscriptViewer } from './components/TranscriptViewer';
 import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
@@ -1110,7 +1110,7 @@ function App() {
           className="app__media-pane" 
           style={{ height: `${splitPosition}%`, maxHeight: 'none' }}
         >
-          {mediaUrl && <MediaPlayer mediaUrl={mediaUrl} mediaRef={mediaRef} />}
+          {mediaUrl && <MediaPlayer src={mediaUrl} mediaElementRef={mediaRef} aria-label="Pulse media" />}
         </div>
 
         <div 

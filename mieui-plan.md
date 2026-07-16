@@ -71,14 +71,20 @@ Notes (2026-07-16): schema in `client/src/ui-staging/types/transcript.ts`; `clie
 
 ## Milestone 3 — `MediaPlayer`
 
-- [ ] `ui-staging/MediaPlayer/MediaPlayer.tsx`: video + audio surfaces, `cva` variants, tokens
-- [ ] `MediaPlayerRef` imperative handle (superset of ui's `AudioPlayerRef`)
-- [ ] Media-type detection by prop (`kind="video" | "audio"`) with extension-based fallback
-- [ ] Error state + retry (port from current [client/src/components/MediaPlayer.tsx](client/src/components/MediaPlayer.tsx)) using ui `Alert`/`Button`
-- [ ] `onTimeUpdate`, `onStateChange`, `onEnded`, `onError` callbacks matching `AudioPlayer` API shape
-- [ ] Swap into `App.tsx`; remove raw `mediaRef` prop drilling (replace with `MediaPlayerRef`)
-- [ ] Delete old `MediaPlayer.tsx` + `MediaPlayer.scss`
-- [ ] Manual test: video artipod + audio artipod both play, seek, error-retry
+- [x] `ui-staging/MediaPlayer/MediaPlayer.tsx`: video + audio surfaces, `cva` variants, tokens
+- [x] `MediaPlayerRef` imperative handle (superset of ui's `AudioPlayerRef`)
+- [x] Media-type detection by prop (`kind="video" | "audio"`) with extension-based fallback
+- [x] Error state + retry (port from old client MediaPlayer) using ui `Button` + `role="alert"`
+- [x] `onTimeUpdate`, `onStateChange`, `onEnded`, `onError` callbacks matching `AudioPlayer` API shape
+- [x] Swap into `App.tsx` — raw element exposed only via transitional `mediaElementRef` prop (full removal blocked on `TranscriptViewer`, lands with M4/M5)
+- [x] Delete old `MediaPlayer.tsx` + `MediaPlayer.scss`
+- [x] Manual test: video artipod + audio artipod both play, seek, error-retry
+
+Notes (2026-07-16):
+- `MediaPlayerRef` is ms-based (`seekToMs`/`getCurrentTimeMs`/…) + `setPlaybackRate`, `isPaused`, `mediaElement` escape hatch.
+- Fixed react types conflict (ui submodule pulls `@types/react@19`): client tsconfig `paths` pins `react`/`react-dom` types to the workspace copy; bumped client `@types/react` to 18.3.x.
+- Added `/artipods` to the vite dev proxy (was missing; only `/api` + `/uploads` were proxied).
+- Dev env quirk: `server/.env` doesn't exist, server defaults to port 3000 and collides with vite — run with `PORT=3001`. Seeded `server/artipods/test-{video,audio}-0001/` for manual testing.
 
 ## Milestone 4 — `TranscriptView` (read-only)
 
