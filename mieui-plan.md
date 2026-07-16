@@ -49,11 +49,16 @@ Design rules (all staged code):
 ## Milestone 1 — Wire `@mieweb/ui` into the client
 
 - [x] Commit submodule setup (`.gitmodules`, `ui/`, `.gitignore` temp/)
-- [ ] Build the submodule: `cd ui && pnpm install && pnpm build`
-- [ ] Add `@mieweb/ui` dependency to `client/package.json` (`file:../ui`)
-- [ ] Add Tailwind to Vite client using ui's `tailwind-preset` (scoped so existing SCSS is untouched)
-- [ ] Wrap app in `ThemeProvider`; verify light/dark theme toggles work
-- [ ] Smoke test: render one `@mieweb/ui` component (e.g. `Button`) in the app
+- [x] Build the submodule: `cd ui && pnpm install && pnpm build`
+- [x] Add `@mieweb/ui` dependency to `client/package.json` (`file:../ui`)
+- [x] Add Tailwind to Vite client using ui's `tailwind-preset` (scoped so existing SCSS is untouched)
+- [x] Wrap app in `ThemeProvider`; verify light/dark theme toggles work
+- [x] Smoke test: render one `@mieweb/ui` component (e.g. `Button`) in the app
+
+Notes (2026-07-16):
+- Tailwind 4 via `@tailwindcss/vite`; `client/src/mieweb-ui.css` imports theme+utilities **without preflight** so existing SCSS is untouched; mieweb brand tokens via `@mieweb/ui/brands/mieweb.css`; `@source` scans ui dist (path is workspace-root `node_modules` — npm hoists).
+- Import ui via subpath (`@mieweb/ui/components/*`) — the root export pulls DocumentScanner's 11MB ONNX wasm into the bundle.
+- Smoke-tested in browser: `ThemeProvider` renders, `html.dark`/`data-theme` toggle works, `--mieweb-primary-500` token + `.bg-card`/`.border-border` utilities generated.
 
 ## Milestone 2 — Staging skeleton + shared types
 
