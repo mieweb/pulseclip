@@ -2,7 +2,7 @@
 
 ## System Design
 
-The Voice Transcription POC follows a clean, provider-agnostic architecture that separates concerns and enables easy extensibility.
+PulseClip follows a clean, provider-agnostic architecture that separates concerns and enables easy extensibility.
 
 ## High-Level Architecture
 
@@ -78,9 +78,9 @@ server/
 
 **API Endpoints:**
 - `GET /api/providers` - List available providers
-- `POST /api/upload` - Upload media file
-- `POST /api/transcribe` - Start transcription
-- `GET /uploads/:filename` - Serve uploaded files
+- `POST /api/upload` - Upload media file (creates an artipod)
+- `POST /api/transcribe` - Start transcription (async with polling for files >100MB)
+- `GET /artipods/:artipodId/:filename` - Serve uploaded media files
 
 **Responsibilities:**
 - File upload handling
