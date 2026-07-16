@@ -1057,6 +1057,20 @@ function App() {
 
           {viewState === 'viewing' && (
             <>
+              <select
+                className="app__provider-dropdown"
+                value={selectedProvider}
+                onChange={(e) => setSelectedProvider(e.target.value)}
+                disabled={providers.length === 0}
+                aria-label="Transcription Provider"
+                title="Provider used when re-transcribing"
+              >
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.displayName}
+                  </option>
+                ))}
+              </select>
               <button
                 className={`app__icon-btn app__data-toggle ${viewMode === 'data' ? 'app__data-toggle--active' : ''}`}
                 onClick={() => setViewMode(viewMode === 'data' ? 'transcript' : 'data')}
