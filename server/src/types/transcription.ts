@@ -41,5 +41,7 @@ export interface TranscriptionOptions {
 export interface TranscriptionProvider {
   id: string;
   displayName: string;
+  /** When true, transcription always runs as an async job with polling, regardless of file size */
+  alwaysAsync?: boolean;
   transcribe(mediaUrl: string, options?: TranscriptionOptions): Promise<ProviderResult>;
 }

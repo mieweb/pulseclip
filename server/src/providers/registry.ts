@@ -1,5 +1,9 @@
+import { existsSync } from 'fs';
+import { isAbsolute, join, dirname } from 'path';
+import { fileURLToPath } from 'url';
 import { TranscriptionProvider } from '../types/transcription.js';
 import { AssemblyAIProvider } from './assemblyai.js';
+import { WhisperProvider } from './whisper.js';
 
 export class ProviderRegistry {
   private providers = new Map<string, TranscriptionProvider>();
@@ -30,6 +34,29 @@ export function initializeProviders(): ProviderRegistry {
     registry.register(new AssemblyAIProvider(assemblyAIKey));
   } else {
     console.warn('ASSEMBLYAI_API_KEY not found in environment');
+  }
+
+  // Register local Whisper if a model path is configured
+  // (requires whisper-cpp and ffmpeg installed - see README)
+  const whisperModelEnv = process.env.WHISPER_MODEL_PATH;
+  if (whisperModelEnv) {
+    // Resolve relative paths against the server package root (parent of src/ or dist/)
+    const serverRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+    const modelPath = isAbsolute(whisperModelEnv)
+      ? whisperModelEnv
+      : join(serverRoot, whisperModelEnv);
+
+    if (existsSync(modelPath)) {
+      registry.register(
+        new WhisperProvider({
+          modelPath,
+          binPath: process.env.WHISPER_BIN,
+          language: process.env.WHISPER_LANGUAGE,
+        })
+      );
+    } else {
+      console.warn(`WHISPER_MODEL_PATH set but model not found: ${modelPath}`);
+    }
   }
 
   return registry;

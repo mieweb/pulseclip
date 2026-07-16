@@ -7,7 +7,7 @@
 ## Features
 
 - 🎙️ **Audio & Video Upload** - Drag and drop support for common formats (MP3, WAV, MP4, MOV)
-- 🔌 **Pluggable Providers** - Provider-agnostic architecture (AssemblyAI implemented)
+- 🔌 **Pluggable Providers** - Provider-agnostic architecture (AssemblyAI cloud + local Whisper)
 - 📝 **Word-Level Timestamps** - Precise timestamp tracking for every word
 - 🎯 **Interactive Transcript** - Click any word to seek media playback
 - 🔍 **Raw Data Access** - View original provider responses for debugging
@@ -108,6 +108,31 @@ npm run dev
 This will start:
 - Server on http://localhost:3001
 - Client on http://localhost:3000
+
+### Optional: local Whisper provider
+
+Transcribe on your own hardware — free, offline, no API key. Requires
+[whisper.cpp](https://github.com/ggml-org/whisper.cpp) and ffmpeg:
+
+```bash
+brew install whisper-cpp ffmpeg   # macOS; see whisper.cpp docs for Linux
+
+# Download a model (base.en ~142MB is a good start; large-v3-turbo for quality)
+mkdir -p server/models
+curl -L -o server/models/ggml-base.en.bin \
+  https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
+```
+
+Then in `server/.env`:
+
+```bash
+WHISPER_MODEL_PATH=./models/ggml-base.en.bin
+```
+
+Restart the server and "Whisper (local)" appears in the provider dropdown.
+Whisper transcriptions always run as background jobs (the UI polls for the
+result), since local transcription is slower than a cloud API. Word timestamps
+are alignment estimates — slightly softer boundaries than AssemblyAI's.
 
 ### Usage
 
