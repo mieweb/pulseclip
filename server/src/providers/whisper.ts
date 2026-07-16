@@ -17,6 +17,10 @@ const execFileAsync = promisify(execFile);
 export interface WhisperConfig {
   /** Path to a whisper.cpp ggml model file (e.g. models/ggml-base.en.bin) */
   modelPath: string;
+  /** Provider id (default: whisper) - must be unique when registering multiple models */
+  id?: string;
+  /** Display name shown in the provider dropdown (default: Whisper (local)) */
+  displayName?: string;
   /** whisper.cpp CLI executable (default: whisper-cli on PATH) */
   binPath?: string;
   /** ffmpeg executable used to extract audio (default: ffmpeg on PATH) */
@@ -52,8 +56,8 @@ interface WhisperSegment {
  * expect slightly softer word boundaries.
  */
 export class WhisperProvider implements TranscriptionProvider {
-  id = 'whisper';
-  displayName = 'Whisper (local)';
+  id: string;
+  displayName: string;
   // Local transcription is much slower than a cloud API; always use the
   // async job + polling flow so HTTP requests never hang for minutes.
   alwaysAsync = true;
@@ -68,6 +72,8 @@ export class WhisperProvider implements TranscriptionProvider {
     if (!config.modelPath) {
       throw new Error('Whisper model path is required');
     }
+    this.id = config.id || 'whisper';
+    this.displayName = config.displayName || 'Whisper (local)';
     this.modelPath = config.modelPath;
     this.binPath = config.binPath || 'whisper-cli';
     this.ffmpegPath = config.ffmpegPath || 'ffmpeg';

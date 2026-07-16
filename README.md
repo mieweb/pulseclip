@@ -123,13 +123,14 @@ curl -L -o server/models/ggml-base.en.bin \
   https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.en.bin
 ```
 
-Then in `server/.env`:
+Then in `server/.env` (comma-separated paths each register as their own
+provider, so the dropdown doubles as a model picker):
 
 ```bash
-WHISPER_MODEL_PATH=./models/ggml-base.en.bin
+WHISPER_MODEL_PATH=./models/ggml-base.en.bin,./models/ggml-large-v3-turbo-q5_0.bin
 ```
 
-Restart the server and "Whisper (local)" appears in the provider dropdown.
+Restart the server and "Whisper (base.en)" etc. appear in the provider dropdown.
 Whisper transcriptions always run as background jobs (the UI polls for the
 result), since local transcription is slower than a cloud API. Word timestamps
 are alignment estimates — slightly softer boundaries than AssemblyAI's.
