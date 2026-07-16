@@ -267,9 +267,10 @@ app.post('/api/transcribe', async (req, res) => {
     }
 
     // Check file size to determine sync vs async transcription
+    // (providers marked alwaysAsync are too slow to hold an HTTP request open)
     const fileSize = existsSync(localPath) ? statSync(localPath).size : 0;
 
-    if (fileSize > ASYNC_TRANSCRIPTION_THRESHOLD) {
+    if (fileSize > ASYNC_TRANSCRIPTION_THRESHOLD || provider.alwaysAsync) {
       // Large file: run transcription asynchronously
       const jobId = randomUUID();
       transcriptionJobs.set(jobId, { id: jobId, status: 'processing', createdAt: Date.now() });
