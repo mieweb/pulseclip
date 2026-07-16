@@ -1742,10 +1742,13 @@ export const TranscriptViewer: FC<TranscriptViewerProps> = ({
   }, [selection, editedWords, cursorIndex]);
 
   // Count active (non-deleted) words (excluding silences for word count)
-  const activeWordCount = editedWords.filter(ew => !ew.deleted && ew.word.wordType !== 'silence').length;
-  const activeSilenceCount = editedWords.filter(ew => !ew.deleted && ew.word.wordType === 'silence').length;
-  const deletedWordCount = editedWords.filter(ew => ew.deleted && ew.word.wordType !== 'silence').length;
-  const deletedSilenceCount = editedWords.filter(ew => ew.deleted && ew.word.wordType === 'silence').length;
+  // Both silence types are pseudo-words: 'silence' and 'silence-newline' (long pauses)
+  const isSilenceWord = (ew: EditableWord) =>
+    ew.word.wordType === 'silence' || ew.word.wordType === 'silence-newline';
+  const activeWordCount = editedWords.filter(ew => !ew.deleted && !isSilenceWord(ew)).length;
+  const activeSilenceCount = editedWords.filter(ew => !ew.deleted && isSilenceWord(ew)).length;
+  const deletedWordCount = editedWords.filter(ew => ew.deleted && !isSilenceWord(ew)).length;
+  const deletedSilenceCount = editedWords.filter(ew => ew.deleted && isSilenceWord(ew)).length;
   
   // Calculate edited duration (sum of non-deleted words/silences, adjusted for speed markers)
   const editedDurationMs = editedWords.reduce((sum, ew, index) => {
