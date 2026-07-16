@@ -48,7 +48,7 @@ Design rules (all staged code):
 
 ## Milestone 1 — Wire `@mieweb/ui` into the client
 
-- [ ] Commit submodule setup (`.gitmodules`, `ui/`, `.gitignore` temp/)
+- [x] Commit submodule setup (`.gitmodules`, `ui/`, `.gitignore` temp/)
 - [ ] Build the submodule: `cd ui && pnpm install && pnpm build`
 - [ ] Add `@mieweb/ui` dependency to `client/package.json` (`file:../ui`)
 - [ ] Add Tailwind to Vite client using ui's `tailwind-preset` (scoped so existing SCSS is untouched)
@@ -96,6 +96,9 @@ Design rules (all staged code):
 - [ ] Delete `TranscriptViewer.tsx` (2,301 lines) + SCSS once fully replaced
 - [ ] Full regression pass: edit, undo, cut/paste, filler removal, silence removal, edited playback, persistence round-trip
 
+
+# Stop Here — the next milestones are for `@mieweb/ui` PRs, not pulseclip app code
+
 ## Milestone 6 — Lift into mieweb/ui (PRs)
 
 - [ ] ui PR A: extract `useMediaTransport` from `AudioPlayer` (no API change) — reconcile staged `MediaPlayer` transport onto it
@@ -104,18 +107,8 @@ Design rules (all staged code):
 - [ ] pulseclip PR: flip imports from `ui-staging/` to `@mieweb/ui`, delete staging folder, pin ui version
 - [ ] Decide submodule fate: keep for dev or drop in favor of published package
 
-## Milestone 7 — osheet adoption PR
 
-- [ ] Add `@mieweb/ui` dependency to osheet (replace vendored pattern where sensible)
-- [ ] Seconds→ms adapter for stored `transcriptionSegments`
-- [ ] Replace `AudioWaveform` + inline transcript list in `artifact-viewer.tsx` with `MediaPlayer` + `TranscriptView`
-- [ ] Side-by-side UX check against Reference UX list — no regression vs the pattern users already like
-- [ ] Keep osheet speaker normalization (Clinician/Patient) via `speakerLabels` prop
-- [ ] Re-wire copy / re-transcribe / remove actions into the `TranscriptView` action slot
-- [ ] New capability: video artifacts get transcript view (previously bare `<video>`)
-- [ ] Playwright visual regression pass in osheet
-
-## Milestone 8 — Segment-mode (diarization) editing
+## Milestone 7 — Segment-mode (diarization) editing
 
 v1 `MediaEditor` edits word-mode transcripts only; segment-mode stays read-only in `TranscriptView`. This milestone brings editing to diarized, segment-level transcripts (the osheet shape).
 
@@ -124,4 +117,3 @@ v1 `MediaEditor` edits word-mode transcripts only; segment-mode stays read-only 
 - [ ] Segment-mode editing UI in `MediaEditor` (row-level selection/toolbar)
 - [ ] Filler/silence removal semantics for segment granularity (or graceful degradation when word timestamps are absent)
 - [ ] osheet follow-up PR: enable editing in `artifact-viewer.tsx`
-
