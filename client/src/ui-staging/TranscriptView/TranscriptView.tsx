@@ -309,7 +309,7 @@ export const TranscriptView = React.forwardRef<HTMLDivElement, TranscriptViewPro
           }}
           {...(resolvedGranularity === 'segment'
             ? { role: 'list', className: 'space-y-2' }
-            : { className: 'text-sm leading-7' })}
+            : { className: 'text-sm leading-relaxed' })}
         >
           {resolvedGranularity === 'segment'
             ? segmentRows.map(renderSegmentRow)
