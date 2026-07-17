@@ -12,13 +12,23 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-    
+      with:
+        submodules: recursive
+
     - name: Setup Node.js
       uses: actions/setup-node@v4
       with:
-        node-version: '18'
+        node-version: '20'
         cache: 'npm'
-    
+
+    - name: Setup pnpm (for the ui submodule)
+      uses: pnpm/action-setup@v4
+      with:
+        package_json_file: ui/package.json
+
+    - name: Build @mieweb/ui submodule
+      run: cd ui && pnpm install --frozen-lockfile && pnpm build
+
     - name: Install dependencies
       run: npm install
     
