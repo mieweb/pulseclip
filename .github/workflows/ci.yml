@@ -13,8 +13,6 @@ jobs:
     steps:
     - uses: actions/checkout@v5
 
-    # Init only the ui submodule: the repo has a stray gitlink at tools/pulse
-    # (no .gitmodules entry) that breaks `submodules: true` checkout.
     - name: Init ui submodule
       run: git submodule update --init ui
 
