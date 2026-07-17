@@ -102,14 +102,17 @@ Notes (2026-07-16): component is controlled — `currentTimeMs` in, `onSeek(time
 
 ## Milestone 5 — `useTranscriptEdits` + `MediaEditor`
 
-- [ ] `ui-staging/hooks/useTranscriptEdits.ts`: `EditableWord[]` state, delete/cut/copy/paste, undo stack, `PlaybackSegment` derivation, filler/silence match computation
-- [ ] `FillerWordsModal` rebuilt on ui `Modal`, `Checkbox`, `Input`, `Slider`, `Button`
-- [ ] `MediaEditor` composition: `MediaPlayer` + editable `TranscriptView` + toolbar; edited-timeline playback via segments
-- [ ] v1 scope: word-mode editing only (segment-mode editing deferred to Milestone 8; segment mode remains read-only in `TranscriptView`)
-- [ ] Controlled API: `initialEdits`, `onEditsChange(editedWords, undoStack)`, `onCursorTimestampChange`
-- [ ] Swap into `App.tsx`; keep YAML/JSON raw-data debug view in pulseclip (feeds from `MediaEditor` state via callbacks)
-- [ ] Delete `TranscriptViewer.tsx` (2,301 lines) + SCSS once fully replaced
-- [ ] Full regression pass: edit, undo, cut/paste, filler removal, silence removal, edited playback, persistence round-trip
+- [x] `ui-staging/hooks/useTranscriptEdits.ts`: `EditableWord[]` state, delete/cut/copy/paste, undo stack, `PlaybackSegment` derivation, filler/silence match computation
+- [x] `FillerWordsModal` rebuilt on ui `Modal`, `Checkbox`, `Input`, `Slider`, `Button` (+ `WordEditorModal`, `SilenceSettingsModal`, `SpeedMarkerMenu`)
+- [x] `MediaEditor` composition: `MediaPlayer` + editable word-mode transcript + toolbar; edited-timeline playback via segments
+- [x] v1 scope: word-mode editing only (segment-mode editing deferred to Milestone 7; segment mode remains read-only in `TranscriptView`)
+- [x] Controlled API: `initialEditedWords`/`initialUndoStack`, `onEditorStateChange`, `onCursorTimestampChange`, `onEditedWordsRender`, `playerRef` escape hatch
+- [x] Swap into `App.tsx`; YAML/JSON raw-data debug view stays in pulseclip (`TranscriptDataView`, fed via `onEditedWordsRender`; editor stays mounted+hidden so state survives the toggle)
+- [x] Delete `TranscriptViewer.tsx` (2,301 lines) + SCSS
+- [x] Regression pass (browser, synthetic events — real input doesn't reach the hidden shared browser): click-to-seek, delete/restore, undo, cut/paste, filler removal (19 deleted), silence chip, data view round-trip, persistence PUT + reload restore
+- [ ] Edited-timeline *audible* playback + real-transcript pass — blocked: background tab suppresses `video.play()`, and the AssemblyAI key in `server/.env` is invalid (19 chars, 401 from api.assemblyai.com) — needs a human ear + valid key
+
+Notes (2026-07-17): synthetic demo transcript seeded via `scripts/seed-transcript-cache.mjs` (md5-keyed server cache) against `doug-noisy-sample.mov`. MediaEditor owns the whole content pane when viewing; the app split-bar drag now only applies to pre-transcription states (minor UX change — resizable split inside MediaEditor is a future nicety).
 
 
 # Stop Here — the next milestones are for `@mieweb/ui` PRs, not pulseclip app code

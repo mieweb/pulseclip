@@ -214,8 +214,8 @@ export const TranscriptView = React.forwardRef<HTMLDivElement, TranscriptViewPro
             tabIndex={0}
             aria-current={isActive ? 'true' : undefined}
             aria-label={`Silence, ${durationSec} seconds`}
-            className={`block h-3 cursor-pointer rounded transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-              isActive ? 'bg-primary/20' : ''
+            className={`block h-3 cursor-pointer rounded transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              isActive ? 'bg-primary-500/20' : ''
             }`}
             {...activationProps(() => seekTo(word.startMs))}
           />
@@ -232,8 +232,8 @@ export const TranscriptView = React.forwardRef<HTMLDivElement, TranscriptViewPro
             tabIndex={0}
             aria-current={isActive ? 'true' : undefined}
             aria-label={`Silence, ${durationSec} seconds`}
-            className={`cursor-pointer rounded px-0.5 text-muted-foreground/60 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-              isActive ? 'bg-primary/20' : ''
+            className={`cursor-pointer rounded px-0.5 text-muted-foreground/60 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              isActive ? 'bg-primary-500/20' : ''
             }`}
             {...activationProps(() => seekTo(word.startMs))}
           >
@@ -249,8 +249,8 @@ export const TranscriptView = React.forwardRef<HTMLDivElement, TranscriptViewPro
           role="button"
           tabIndex={0}
           aria-current={isActive ? 'true' : undefined}
-          className={`cursor-pointer rounded px-0.5 transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-            isActive ? 'bg-primary/20 text-foreground' : ''
+          className={`cursor-pointer rounded px-0.5 transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+            isActive ? 'bg-primary-500/20 text-foreground' : ''
           }`}
           {...activationProps(() => seekTo(word.startMs))}
         >
@@ -272,8 +272,8 @@ export const TranscriptView = React.forwardRef<HTMLDivElement, TranscriptViewPro
             type="button"
             data-transcript-index={index}
             aria-current={isActive ? 'true' : undefined}
-            className={`flex w-full gap-3 rounded px-2 py-1 text-left text-sm cursor-pointer transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
-              isActive ? 'bg-primary/20' : ''
+            className={`flex w-full gap-3 rounded px-2 py-1 text-left text-sm cursor-pointer transition-colors hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+              isActive ? 'bg-primary-500/20' : ''
             }`}
             {...activationProps(() => seekTo(row.startMs))}
           >
@@ -283,7 +283,7 @@ export const TranscriptView = React.forwardRef<HTMLDivElement, TranscriptViewPro
               </span>
             )}
             {speaker && (
-              <span className="w-24 shrink-0 font-semibold text-primary">{speaker}:</span>
+              <span className="w-24 shrink-0 font-semibold text-primary-600">{speaker}:</span>
             )}
             <span className="text-foreground">{row.text}</span>
           </button>

@@ -630,6 +630,20 @@
   }
 }
 
+// MediaEditor (ui-staging) fills the whole content pane when viewing
+.app__editor-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+// Keep MediaEditor mounted (preserving edit/UI state) while the data view shows
+.app__hidden-editor {
+  display: none;
+}
+
 .app__media-pane {
   flex-shrink: 0;
   display: flex;
