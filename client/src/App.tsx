@@ -4,6 +4,7 @@ import { FileUpload } from './components/FileUpload';
 import { PulseCamButton } from './components/PulseCamButton';
 import { MediaPlayer, type MediaPlayerRef } from './ui-staging/MediaPlayer';
 import { MediaEditor } from './ui-staging/MediaEditor';
+import { ThemeToggle } from '@mieweb/ui/components/ThemeProvider';
 import { TranscriptDataView } from './components/TranscriptDataView';
 import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
@@ -803,6 +804,7 @@ function App() {
             <p className="app__banner-tagline">Word-level transcripts for audio &amp; video</p>
           </div>
           <nav className="app__banner-links" aria-label="Project links">
+            <ThemeToggle mode="three-way" aria-label="Toggle color theme" />
             <a href="https://github.com/mieweb/pulseclip" target="_blank" rel="noopener noreferrer" className="app__banner-link">
               GitHub
             </a>
@@ -980,6 +982,7 @@ function App() {
         </div>
 
         <div className="app__toolbar-right">
+          <ThemeToggle mode="three-way" aria-label="Toggle color theme" />
           {viewState === 'ready' && (
             <>
               <select
