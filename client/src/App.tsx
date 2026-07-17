@@ -804,7 +804,12 @@ function App() {
             <p className="app__banner-tagline">Word-level transcripts for audio &amp; video</p>
           </div>
           <nav className="app__banner-links" aria-label="Project links">
-            <ThemeToggle mode="three-way" aria-label="Toggle color theme" />
+            <ThemeToggle
+              mode="three-way"
+              variant="ghost"
+              aria-label="Toggle color theme"
+              className="text-white/80 hover:bg-white/10 hover:text-white dark:text-white/80 dark:hover:bg-white/10"
+            />
             <a href="https://github.com/mieweb/pulseclip" target="_blank" rel="noopener noreferrer" className="app__banner-link">
               GitHub
             </a>
@@ -982,7 +987,12 @@ function App() {
         </div>
 
         <div className="app__toolbar-right">
-          <ThemeToggle mode="three-way" aria-label="Toggle color theme" />
+          <ThemeToggle
+            mode="three-way"
+            variant="ghost"
+            aria-label="Toggle color theme"
+            className="text-white/80 hover:bg-white/10 hover:text-white dark:text-white/80 dark:hover:bg-white/10"
+          />
           {viewState === 'ready' && (
             <>
               <select
