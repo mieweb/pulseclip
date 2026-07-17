@@ -94,7 +94,7 @@ Notes (2026-07-16):
 - [x] Same-speaker segment merging (osheet `formatTranscriptText` behavior) as a display option
 - [x] Diarization: `speakers` prop with display names; `speakerLabels` mapping / render prop (Clinician/Patient etc.)
 - [x] Toolbar/action slot so hosts can add copy / re-transcribe / remove buttons (osheet pattern)
-- [ ] Playback speed control + speed markers → deferred to M5 (`SpeedMarker` depends on `EditableWord` state)
+- [x] Playback speed control + speed markers → delivered in M5 (`SpeedMarkerMenu` + `toggleSpeedMarker`/`getSpeedAtIndex` in `MediaEditor`)
 - [x] Tokens/cva styling; ARIA (`aria-current`, keyboard nav, list semantics)
 - [ ] Swap into pulseclip → happens in M5 (the app has no pure non-editing path; `TranscriptViewer` couples viewing+editing, so the swap lands when `MediaEditor` replaces it)
 
@@ -110,7 +110,7 @@ Notes (2026-07-16): component is controlled — `currentTimeMs` in, `onSeek(time
 - [x] Swap into `App.tsx`; YAML/JSON raw-data debug view stays in pulseclip (`TranscriptDataView`, fed via `onEditedWordsRender`; editor stays mounted+hidden so state survives the toggle)
 - [x] Delete `TranscriptViewer.tsx` (2,301 lines) + SCSS
 - [x] Regression pass (browser, synthetic events — real input doesn't reach the hidden shared browser): click-to-seek, delete/restore, undo, cut/paste, filler removal (19 deleted), silence chip, data view round-trip, persistence PUT + reload restore
-- [ ] Edited-timeline *audible* playback + real-transcript pass — blocked: background tab suppresses `video.play()`, and the AssemblyAI key in `server/.env` is invalid (19 chars, 401 from api.assemblyai.com) — needs a human ear + valid key
+- [x] Edited-timeline *audible* playback + real-transcript pass — unblocked: valid 32-char `ASSEMBLYAI_API_KEY` in `server/.env`; real transcription verified (155 words on doug-noisy-sample.mov). Audible edited-playback confirmed in-browser by the user.
 
 Notes (2026-07-17): synthetic demo transcript seeded via `scripts/seed-transcript-cache.mjs` (md5-keyed server cache) against `doug-noisy-sample.mov`. MediaEditor owns the whole content pane when viewing; the app split-bar drag now only applies to pre-transcription states (minor UX change — resizable split inside MediaEditor is a future nicety).
 
@@ -119,10 +119,12 @@ Notes (2026-07-17): synthetic demo transcript seeded via `scripts/seed-transcrip
 
 ## Milestone 6 — Lift into mieweb/ui (PRs)
 
-- [ ] ui PR A: extract `useMediaTransport` from `AudioPlayer` (no API change) — reconcile staged `MediaPlayer` transport onto it
-- [ ] ui PR B: copy `ui-staging/*` → `ui/src/components/*`; add `index.ts` exports, Storybook stories, vitest tests
-- [ ] Dark-mode + theme audit in Storybook
-- [ ] pulseclip PR: flip imports from `ui-staging/` to `@mieweb/ui`, delete staging folder, pin ui version
+- [x] ui PR A: add `useMediaTransport` headless hook; reconcile staged `MediaPlayer` transport onto it (mieweb/ui#313)
+- [x] ui PR B: copy `ui-staging/*` → `ui/src/components/*` (+ `useTranscriptEdits` → `ui/src/hooks/`); add `index.ts` exports + `tsup` entries, Storybook stories, vitest tests (53 tests) (mieweb/ui#313)
+- [ ] Dark-mode + theme audit in Storybook (static token audit clean; visual pass pending)
+- [x] pulseclip PR: flip imports from `ui-staging/` to `@mieweb/ui`, delete staging folder, bump ui submodule pointer
+- [ ] After ui#313 merges: update the submodule pointer to the merge commit on `main`
+- [ ] DEFERRED (own PR): refactor `AudioPlayer` native path onto `useMediaTransport`
 - [ ] Decide submodule fate: keep for dev or drop in favor of published package
 
 
