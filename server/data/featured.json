@@ -1,16 +1,10 @@
 {
   "featured": [
     {
-      "artipodId": "61dd3471-dd98-4ff3-a5ae-27afee3fc8af",
-      "title": "Demo Video Test",
-      "thumbnail": "/artipods/61dd3471-dd98-4ff3-a5ae-27afee3fc8af/thumbnail.png",
-      "addedAt": "2026-02-06T05:33:15.025Z"
-    },
-    {
-      "artipodId": "75bc43eb-7d0d-401c-919b-53b05c225aa4",
-      "title": "Doug Demo to Martin",
-      "thumbnail": "/artipods/75bc43eb-7d0d-401c-919b-53b05c225aa4/thumbnail.png",
-      "addedAt": "2026-02-06T09:30:49.013Z"
+      "artipodId": "6a4a0bec-841e-4633-84b9-996aefffb71b",
+      "title": "Doug Noisy Sample",
+      "thumbnail": "/artipods/6a4a0bec-841e-4633-84b9-996aefffb71b/thumbnail.png",
+      "addedAt": "2026-07-17T00:00:00.000Z"
     }
   ]
 }

@@ -10,7 +10,7 @@
     justify-content: space-between;
     gap: 12px;
     padding: 8px 12px;
-    border-bottom: 1px solid rgba(128, 128, 128, 0.25);
+    border-bottom: 1px solid var(--mieweb-border, rgba(128, 128, 128, 0.25));
 
     h3 {
       margin: 0;
@@ -26,7 +26,7 @@
 
   &__source-toggle {
     display: inline-flex;
-    border: 1px solid rgba(128, 128, 128, 0.35);
+    border: 1px solid var(--mieweb-border, rgba(128, 128, 128, 0.35));
     border-radius: 6px;
     overflow: hidden;
 
@@ -39,7 +39,7 @@
       color: inherit;
 
       &.is-active {
-        background: rgba(128, 128, 128, 0.25);
+        background: var(--mieweb-muted, rgba(128, 128, 128, 0.25));
         font-weight: 600;
       }
     }

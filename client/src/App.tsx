@@ -813,7 +813,6 @@ function App() {
               mode="three-way"
               variant="ghost"
               aria-label="Toggle color theme"
-              className="text-white/80 hover:bg-white/10 hover:text-white dark:text-white/80 dark:hover:bg-white/10"
             />
             <a href="https://github.com/mieweb/pulseclip" target="_blank" rel="noopener noreferrer" className="app__banner-link">
               GitHub
@@ -997,7 +996,6 @@ function App() {
             mode="three-way"
             variant="ghost"
             aria-label="Toggle color theme"
-            className="text-white/80 hover:bg-white/10 hover:text-white dark:text-white/80 dark:hover:bg-white/10"
           />
           {viewState === 'ready' && (
             <>
