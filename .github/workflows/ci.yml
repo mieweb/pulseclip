@@ -12,8 +12,11 @@ jobs:
 
     steps:
     - uses: actions/checkout@v4
-      with:
-        submodules: recursive
+
+    # Init only the ui submodule: the repo has a stray gitlink at tools/pulse
+    # (no .gitmodules entry) that breaks `submodules: true` checkout.
+    - name: Init ui submodule
+      run: git submodule update --init ui
 
     - name: Setup Node.js
       uses: actions/setup-node@v4
