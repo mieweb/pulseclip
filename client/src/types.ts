@@ -1,61 +1,24 @@
-/** Type of transcript word - 'word' for spoken content, 'silence' for detected gaps, 'silence-newline' for longer pauses */
-export type WordType = 'word' | 'silence' | 'silence-newline';
-
-export interface TranscriptWord {
-  text: string;
-  startMs: number;
-  endMs: number;
-  speakerId?: string;
-  confidence?: number;
-  /** Type of word: 'word' for spoken content, 'silence' for detected gaps. Defaults to 'word' */
-  wordType?: WordType;
-}
-
 /**
- * An editable word that references the original transcript word.
- * Used in the edited timeline to track deletions and reordering.
+ * PulseClip app types.
+ *
+ * The transcript schema lives in ./ui-staging/types/transcript (staged for
+ * @mieweb/ui) and is re-exported here so existing app imports keep working.
+ * Only app-specific types (server API shapes) are defined below.
  */
-export interface EditableWord {
-  /** Reference to original word in transcript.words */
-  originalIndex: number;
-  /** The word data (from original transcript) */
-  word: TranscriptWord;
-  /** Whether this word is marked as deleted */
-  deleted: boolean;
-  /** Whether this word was inserted (pasted from clipboard) */
-  inserted?: boolean;
-}
+export type {
+  WordType,
+  TranscriptWord,
+  TranscriptSegment,
+  Speaker,
+  Transcript,
+  EditableWord,
+  PlaybackSegment,
+  PlaybackSpeed,
+  SpeedMarker,
+} from './ui-staging/types/transcript';
+export { PLAYBACK_SPEEDS } from './ui-staging/types/transcript';
 
-/**
- * Represents a contiguous segment of playback from the original media.
- * Used when playing back an edited timeline with potentially reordered/deleted words.
- */
-export interface PlaybackSegment {
-  startMs: number;
-  endMs: number;
-  /** Indices into the editedWords array that this segment covers */
-  editedIndices: number[];
-}
-
-export interface TranscriptSegment {
-  text: string;
-  startMs: number;
-  endMs: number;
-  speakerId?: string;
-  words: TranscriptWord[];
-}
-
-export interface Speaker {
-  id: string;
-  name?: string;
-}
-
-export interface Transcript {
-  durationMs: number;
-  speakers?: Speaker[];
-  words: TranscriptWord[];
-  segments?: TranscriptSegment[];
-}
+import type { Transcript } from './ui-staging/types/transcript';
 
 export interface Provider {
   id: string;
@@ -74,21 +37,4 @@ export interface FeaturedPulse {
   title: string;
   thumbnail?: string;
   addedAt: string;
-}
-
-/** Available playback speed multipliers */
-export type PlaybackSpeed = 0.5 | 0.75 | 1 | 1.25 | 1.5 | 1.75 | 2;
-
-/** Array of all available speed options for dropdowns */
-export const PLAYBACK_SPEEDS: PlaybackSpeed[] = [0.5, 0.75, 1, 1.25, 1.5, 1.75, 2];
-
-/**
- * A speed marker applied to a word in the transcript.
- * The speed applies from this word until the next speed marker or end of transcript.
- */
-export interface SpeedMarker {
-  /** Index in the editedWords array where the speed marker is placed */
-  wordIndex: number;
-  /** The playback speed multiplier */
-  speed: PlaybackSpeed;
 }

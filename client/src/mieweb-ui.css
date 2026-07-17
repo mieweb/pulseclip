@@ -1,0 +1,22 @@
+/**
+ * @mieweb/ui Tailwind CSS 4 integration.
+ *
+ * Deliberately omits Tailwind's preflight so the existing pulseclip SCSS
+ * remains untouched. Utilities are generated from this app's source plus
+ * the @mieweb/ui dist (via @source), themed by the mieweb brand tokens.
+ */
+@layer theme, base, components, utilities;
+
+@import 'tailwindcss/theme.css' layer(theme);
+@import 'tailwindcss/utilities.css' layer(utilities);
+@import '@mieweb/ui/brands/mieweb.css' layer(theme);
+
+/* Scan @mieweb/ui compiled components for class names (replaces safelist).
+   node_modules is hoisted to the workspace root by npm workspaces. */
+@source '../../node_modules/@mieweb/ui/dist';
+
+/* Load the @mieweb/ui preset (semantic colors: bg-card, border-border, …) */
+@config '../tailwind.config.js';
+
+/* Match @mieweb/ui dark mode convention: class or data-theme attribute */
+@custom-variant dark (&:where(.dark, .dark *, [data-theme='dark'], [data-theme='dark'] *));

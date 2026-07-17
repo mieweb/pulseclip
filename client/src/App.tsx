@@ -2,8 +2,11 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { FileUpload } from './components/FileUpload';
 import { PulseCamButton } from './components/PulseCamButton';
-import { MediaPlayer } from './components/MediaPlayer';
-import { TranscriptViewer } from './components/TranscriptViewer';
+import { MediaPlayer, type MediaPlayerRef } from './ui-staging/MediaPlayer';
+import { MediaEditor } from './ui-staging/MediaEditor';
+import { ThemeToggle } from '@mieweb/ui/components/ThemeProvider';
+import { BrandSelector, restoreBrand } from './components/BrandSelector';
+import { TranscriptDataView } from './components/TranscriptDataView';
 import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
 import './App.scss';
@@ -25,6 +28,9 @@ interface VersionInfo {
 }
 
 declare const __BUILD_COMMIT_HASH__: string | undefined;
+
+// Apply the persisted brand color theme before first paint of the app tree
+restoreBrand();
 
 function App() {
   const { artipodId: urlArtipodId } = useParams<{ artipodId: string }>();
@@ -59,9 +65,13 @@ function App() {
   const [savedEditorState, setSavedEditorState] = useState<SavedEditorState | null>(null);
   const [editsLoaded, setEditsLoaded] = useState(false);
   const [cursorTimestampMs, setCursorTimestampMs] = useState<number | null>(null);
+  const [latestEditedWords, setLatestEditedWords] = useState<EditableWord[]>([]);
   const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
+  const playerRef = useRef<MediaPlayerRef>(null);
+  /** The live media element — from MediaEditor's player when viewing, else the standalone player */
+  const getMediaElement = () => playerRef.current?.mediaElement ?? mediaRef.current;
   const contentRef = useRef<HTMLElement>(null);
   const hasAutoTranscribed = useRef(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -304,7 +314,8 @@ function App() {
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Only handle spacebar when not typing in an input/textarea/select
-      if (e.code === 'Space' && mediaRef.current) {
+      const media = getMediaElement();
+      if (e.code === 'Space' && media) {
         const target = e.target as HTMLElement;
         const isInteractiveElement = 
           target.tagName === 'INPUT' || 
@@ -315,10 +326,10 @@ function App() {
         
         if (!isInteractiveElement) {
           e.preventDefault();
-          if (mediaRef.current.paused) {
-            mediaRef.current.play();
+          if (media.paused) {
+            media.play();
           } else {
-            mediaRef.current.pause();
+            media.pause();
           }
         }
       }
@@ -582,12 +593,13 @@ function App() {
   };
 
   const handleCaptureThumbnail = async (timestampMs: number): Promise<boolean> => {
-    if (!mediaRef.current || !artipodId || !apiKey) {
+    const media = getMediaElement();
+    if (!media || !artipodId || !apiKey) {
       if (!apiKey) setShowApiKeyModal(true);
       return false;
     }
 
-    const video = mediaRef.current as HTMLVideoElement;
+    const video = media as HTMLVideoElement;
     if (video.tagName !== 'VIDEO') {
       setError('Thumbnail capture only works with video files');
       return false;
@@ -796,6 +808,12 @@ function App() {
             <p className="app__banner-tagline">Word-level transcripts for audio &amp; video</p>
           </div>
           <nav className="app__banner-links" aria-label="Project links">
+            <BrandSelector />
+            <ThemeToggle
+              mode="three-way"
+              variant="ghost"
+              aria-label="Toggle color theme"
+            />
             <a href="https://github.com/mieweb/pulseclip" target="_blank" rel="noopener noreferrer" className="app__banner-link">
               GitHub
             </a>
@@ -973,6 +991,12 @@ function App() {
         </div>
 
         <div className="app__toolbar-right">
+          <BrandSelector />
+          <ThemeToggle
+            mode="three-way"
+            variant="ghost"
+            aria-label="Toggle color theme"
+          />
           {viewState === 'ready' && (
             <>
               <select
@@ -1104,61 +1128,74 @@ function App() {
         </div>
       )}
 
-      {/* Split content area */}
+      {/* Content area: MediaEditor owns the whole pane when viewing;
+          the standalone player + split bar serve the pre-transcription states */}
       <main className={`app__content${isDragging ? ' app__content--dragging' : ''}`} ref={contentRef}>
-        <div 
-          className="app__media-pane" 
-          style={{ height: `${splitPosition}%`, maxHeight: 'none' }}
-        >
-          {mediaUrl && <MediaPlayer mediaUrl={mediaUrl} mediaRef={mediaRef} />}
-        </div>
-
-        <div 
-          className="app__split-bar"
-          onMouseDown={handleSplitMouseDown}
-          onTouchStart={handleSplitTouchStart}
-          role="separator"
-          aria-label="Resize media and transcript panes"
-          aria-orientation="horizontal"
-        >
-          <div className="app__split-bar-handle" />
-        </div>
-
-        <div className="app__transcript-pane">
-          {viewState === 'ready' && (
-            <div className="app__ready-message">
-              <p>Ready to transcribe</p>
-              <p className="app__ready-hint">
-                Click "Transcribe" to start processing your media file
-              </p>
-            </div>
-          )}
-
-          {viewState === 'transcribing' && (
-            <div className="app__loading">
-              <div className="app__spinner" />
-              <p>Processing with {providers.find(p => p.id === selectedProvider)?.displayName}...</p>
-            </div>
-          )}
-
-          {viewState === 'viewing' && transcriptionResult && editsLoaded && (
-            <TranscriptViewer
+        {viewState === 'viewing' && transcriptionResult && editsLoaded ? (
+          <>
+            <div className={viewMode === 'data' ? 'app__hidden-editor' : 'app__editor-pane'}>
+              <MediaEditor
+                src={mediaUrl!}
                 transcript={transcriptionResult.transcript}
-                mediaRef={mediaRef}
-                viewMode={viewMode}
+                initialEditedWords={savedEditorState?.editedWords}
+                initialUndoStack={savedEditorState?.undoStack}
+                onEditorStateChange={saveEditorState}
+                onHasEditsChange={setHasEdits}
+                onCursorTimestampChange={setCursorTimestampMs}
+                onEditedWordsRender={setLatestEditedWords}
+                playerRef={playerRef}
+              />
+            </div>
+            {viewMode === 'data' && (
+              <TranscriptDataView
+                transcript={transcriptionResult.transcript}
+                editedWords={latestEditedWords}
                 dataSource={dataSource}
                 dataFormat={dataFormat}
                 onDataSourceChange={setDataSource}
                 onDataFormatChange={setDataFormat}
-                rawData={transcriptionResult.raw}
-                onHasEditsChange={setHasEdits}
-                initialEditedWords={savedEditorState?.editedWords}
-                initialUndoStack={savedEditorState?.undoStack}
-                onEditorStateChange={saveEditorState}
-                onCursorTimestampChange={setCursorTimestampMs}
               />
-          )}
-        </div>
+            )}
+          </>
+        ) : (
+          <>
+            <div 
+              className="app__media-pane" 
+              style={{ height: `${splitPosition}%`, maxHeight: 'none' }}
+            >
+              {mediaUrl && <MediaPlayer src={mediaUrl} mediaElementRef={mediaRef} aria-label="Pulse media" />}
+            </div>
+
+            <div 
+              className="app__split-bar"
+              onMouseDown={handleSplitMouseDown}
+              onTouchStart={handleSplitTouchStart}
+              role="separator"
+              aria-label="Resize media and transcript panes"
+              aria-orientation="horizontal"
+            >
+              <div className="app__split-bar-handle" />
+            </div>
+
+            <div className="app__transcript-pane">
+              {viewState === 'ready' && (
+                <div className="app__ready-message">
+                  <p>Ready to transcribe</p>
+                  <p className="app__ready-hint">
+                    Click "Transcribe" to start processing your media file
+                  </p>
+                </div>
+              )}
+
+              {viewState === 'transcribing' && (
+                <div className="app__loading">
+                  <div className="app__spinner" />
+                  <p>Processing with {providers.find(p => p.id === selectedProvider)?.displayName}...</p>
+                </div>
+              )}
+            </div>
+          </>
+        )}
       </main>
     </div>
   );

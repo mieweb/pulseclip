@@ -1,0 +1,20 @@
+// Follows the @mieweb/ui theme tokens (matches header links / ThemeToggle)
+.brand-selector {
+  background: transparent;
+  border: 1px solid var(--mieweb-border, #e5e7eb);
+  border-radius: var(--mieweb-radius-md, 6px);
+  color: var(--mieweb-muted-foreground, #888);
+  font-size: 0.8rem;
+  padding: 4px 6px;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--mieweb-muted, #f5f5f5);
+    color: var(--mieweb-foreground, #171717);
+  }
+
+  option {
+    color: initial;
+    background: initial;
+  }
+}

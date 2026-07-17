@@ -11,14 +11,26 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
-    
+    - uses: actions/checkout@v5
+
+    - name: Init ui submodule
+      run: git submodule update --init ui
+
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v5
       with:
-        node-version: '18'
+        node-version: '22'
         cache: 'npm'
-    
+
+    # Use corepack (bundled with Node) to provide the pnpm version pinned in
+    # ui/package.json's "packageManager" field — avoids the deprecated
+    # pnpm/action-setup action that still ran on Node 20.
+    - name: Enable pnpm (for the ui submodule)
+      run: corepack enable
+
+    - name: Build @mieweb/ui submodule
+      run: cd ui && pnpm install --frozen-lockfile && pnpm build
+
     - name: Install dependencies
       run: npm install
     

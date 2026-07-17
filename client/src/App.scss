@@ -1,7 +1,7 @@
 // Upload view - full page with sticky banner
 .app--upload {
   min-height: 100vh;
-  background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+  background: var(--mieweb-background, #fff);
 }
 
 // Sticky banner at top
@@ -13,9 +13,9 @@
   align-items: center;
   justify-content: space-between;
   padding: 12px 24px;
-  background: rgba(22, 33, 62, 0.95);
+  background: var(--mieweb-card, #fff);
   backdrop-filter: blur(10px);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+  border-bottom: 1px solid var(--mieweb-border, #e5e7eb);
   
   @media (max-width: 600px) {
     flex-direction: column;
@@ -36,31 +36,39 @@
 }
 
 .app__banner-title {
-  color: white;
+  color: var(--mieweb-foreground, #171717);
   font-size: 20px;
   font-weight: 600;
   margin: 0;
 }
 
 .app__banner-tagline {
-  color: #666;
+  color: var(--mieweb-muted-foreground, #666);
   font-size: 13px;
   margin: 0;
 }
 
 .app__banner-links {
   display: flex;
+  align-items: center;
   gap: 16px;
+
+  @media (max-width: 600px) {
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 12px 14px;
+    width: 100%;
+  }
 }
 
 .app__banner-link {
-  color: #888;
+  color: var(--mieweb-muted-foreground, #888);
   text-decoration: none;
   font-size: 13px;
   transition: color 0.2s;
   
   &:hover {
-    color: #4fc3f7;
+    color: var(--mieweb-primary-500, #4fc3f7);
   }
 
   &--mono {
@@ -75,7 +83,13 @@
   gap: 8px;
   margin-left: 8px;
   padding-left: 16px;
-  border-left: 1px solid rgba(255, 255, 255, 0.1);
+  border-left: 1px solid var(--mieweb-border, #e5e7eb);
+
+  @media (max-width: 600px) {
+    margin-left: 0;
+    padding-left: 0;
+    border-left: none;
+  }
 }
 
 // Landing page main content
@@ -94,7 +108,7 @@
 }
 
 .app__upload-heading {
-  color: #888;
+  color: var(--mieweb-muted-foreground, #888);
   font-size: 14px;
   font-weight: 500;
   margin: 0 0 16px 0;
@@ -134,7 +148,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #555;
+  color: var(--mieweb-muted-foreground, #555);
   font-size: 12px;
   text-transform: uppercase;
   letter-spacing: 1px;
@@ -147,7 +161,7 @@
       content: '';
       width: 1px;
       height: 40px;
-      background: rgba(255, 255, 255, 0.15);
+      background: var(--mieweb-border, #e5e7eb);
     }
     
     span {
@@ -164,7 +178,7 @@
       content: '';
       flex: 1;
       height: 1px;
-      background: rgba(255, 255, 255, 0.15);
+      background: var(--mieweb-border, #e5e7eb);
     }
     
     span {
@@ -183,15 +197,15 @@
   justify-content: center;
   gap: 12px;
   padding: 24px 16px;
-  border: 2px dashed rgba(255, 255, 255, 0.3);
+  border: 2px dashed var(--mieweb-border, #e5e7eb);
   border-radius: 8px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--mieweb-muted, #f5f5f5);
 }
 
 .app__pulsecam-hint {
   margin: 0;
   font-size: 12px;
-  color: #666;
+  color: var(--mieweb-muted-foreground, #666);
 }
 
 // Features section
@@ -208,9 +222,9 @@
 .app__feature {
   text-align: center;
   padding: 16px 12px;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--mieweb-muted, #f5f5f5);
   border-radius: 8px;
-  border: 1px solid rgba(255, 255, 255, 0.06);
+  border: 1px solid var(--mieweb-border, #e5e7eb);
 }
 
 .app__feature-icon {
@@ -220,14 +234,14 @@
 }
 
 .app__feature-title {
-  color: #e0e0e0;
+  color: var(--mieweb-foreground, #171717);
   font-size: 14px;
   font-weight: 600;
   margin: 0 0 4px 0;
 }
 
 .app__feature-desc {
-  color: #666;
+  color: var(--mieweb-muted-foreground, #666);
   font-size: 12px;
   margin: 0;
   line-height: 1.4;
@@ -236,8 +250,8 @@
 .app__error {
   margin-top: 16px;
   padding: 12px 16px;
-  background: #ffebee;
-  color: #c62828;
+  background: var(--mieweb-destructive, #ffebee);
+  color: var(--mieweb-destructive-foreground, #c62828);
   border-radius: 6px;
   font-size: 14px;
 }
@@ -248,7 +262,7 @@
 }
 
 .app__featured-title {
-  color: #888;
+  color: var(--mieweb-muted-foreground, #888);
   font-size: 14px;
   font-weight: 500;
   margin: 0 0 16px 0;
@@ -269,16 +283,16 @@
 .app__featured-card {
   display: flex;
   flex-direction: column;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--mieweb-card, #fff);
   border-radius: 8px;
   overflow: hidden;
   text-decoration: none;
   transition: all 0.2s ease;
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  border: 1px solid var(--mieweb-border, #e5e7eb);
   
   &:hover {
-    background: rgba(255, 255, 255, 0.1);
-    border-color: rgba(79, 195, 247, 0.3);
+    background: var(--mieweb-muted, #f5f5f5);
+    border-color: var(--mieweb-primary-500, #4fc3f7);
     transform: translateY(-2px);
   }
 }
@@ -295,13 +309,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(255, 255, 255, 0.03);
+  background: var(--mieweb-muted, #f5f5f5);
   font-size: 32px;
 }
 
 .app__featured-pulse-title {
   padding: 10px 12px;
-  color: #e0e0e0;
+  color: var(--mieweb-foreground, #171717);
   font-size: 13px;
   font-weight: 500;
   white-space: nowrap;
@@ -336,16 +350,16 @@
   align-items: center;
   gap: 6px;
   padding: 8px 14px;
-  background: rgba(255, 255, 255, 0.05);
-  color: #888;
+  background: var(--mieweb-muted, #f5f5f5);
+  color: var(--mieweb-muted-foreground, #888);
   text-decoration: none;
   border-radius: 6px;
   font-size: 13px;
   transition: all 0.2s ease;
   
   &:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #bbb;
+    background: var(--mieweb-border, #e5e7eb);
+    color: var(--mieweb-foreground, #171717);
   }
 }
 
@@ -357,7 +371,7 @@
   max-height: 100dvh;
   display: flex;
   flex-direction: column;
-  background: #0f0f1a;
+  background: var(--mieweb-background, #0f0f1a);
   overflow: hidden;
   touch-action: none; // Prevent page scroll on touch devices
   overscroll-behavior: none;
@@ -369,11 +383,16 @@
   justify-content: space-between;
   align-items: center;
   padding: 8px 16px;
-  background: #1a1a2e;
-  border-bottom: 1px solid #2a2a4a;
+  background: var(--mieweb-card, #fff);
+  border-bottom: 1px solid var(--mieweb-border, #e5e7eb);
   flex-shrink: 0;
   position: relative;
   z-index: 10;
+
+  @media (max-width: 600px) {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
 }
 
 .app__toolbar-left {
@@ -387,24 +406,30 @@
   display: flex;
   align-items: center;
   gap: 8px;
+
+  @media (max-width: 600px) {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+    gap: 8px;
+  }
 }
 
 .app__menu-btn {
   background: transparent;
   border: none;
-  color: white;
+  color: var(--mieweb-foreground, #171717);
   font-size: 20px;
   cursor: pointer;
   padding: 4px 8px;
   border-radius: 4px;
   
   &:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--mieweb-muted, #f5f5f5);
   }
 }
 
 .app__filename {
-  color: #aaa;
+  color: var(--mieweb-muted-foreground, #aaa);
   font-size: 14px;
   white-space: nowrap;
   overflow: hidden;
@@ -417,18 +442,18 @@
 }
 
 .app__toolbar-version {
-  color: #666;
+  color: var(--mieweb-muted-foreground, #666);
   text-decoration: none;
   font-size: 10px;
   font-family: monospace;
   padding: 2px 5px;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--mieweb-muted, #f5f5f5);
   border-radius: 3px;
   transition: all 0.2s;
 
   &:hover {
-    color: #4fc3f7;
-    background: rgba(79, 195, 247, 0.1);
+    color: var(--mieweb-primary-500, #4fc3f7);
+    background: var(--mieweb-primary-50, rgba(79, 195, 247, 0.1));
   }
 }
 
@@ -438,28 +463,28 @@
 }
 
 .app__toolbar-version--client {
-  color: #81c784;
+  color: var(--mieweb-success, #81c784);
   
   &:hover {
-    color: #a5d6a7;
-    background: rgba(129, 199, 132, 0.1);
+    color: var(--mieweb-success, #a5d6a7);
+    background: var(--mieweb-muted, rgba(129, 199, 132, 0.1));
   }
 }
 
 .app__toolbar-version--server {
-  color: #ffb74d;
+  color: var(--mieweb-warning, #ffb74d);
   
   &:hover {
-    color: #ffcc80;
-    background: rgba(255, 183, 77, 0.1);
+    color: var(--mieweb-warning, #ffcc80);
+    background: var(--mieweb-muted, rgba(255, 183, 77, 0.1));
   }
 }
 
 .app__provider-dropdown {
   padding: 6px 12px;
-  background: #2a2a4a;
-  color: white;
-  border: 1px solid #3a3a5a;
+  background: var(--mieweb-input, #f5f5f5);
+  color: var(--mieweb-foreground, #171717);
+  border: 1px solid var(--mieweb-border, #e5e7eb);
   border-radius: 4px;
   font-size: 14px;
   cursor: pointer;
@@ -471,8 +496,8 @@
 
 .app__transcribe-btn {
   padding: 6px 16px;
-  background: #4CAF50;
-  color: white;
+  background: var(--mieweb-success, #4CAF50);
+  color: var(--mieweb-success-foreground, #fff);
   border: none;
   border-radius: 4px;
   font-size: 14px;
@@ -480,7 +505,7 @@
   cursor: pointer;
   
   &:hover:not(:disabled) {
-    background: #45a049;
+    background: var(--mieweb-success, #45a049);
   }
   
   &:disabled {
@@ -490,34 +515,34 @@
 }
 
 .app__status {
-  color: #aaa;
+  color: var(--mieweb-muted-foreground, #aaa);
   font-size: 14px;
   padding: 6px 12px;
 }
 
 .app__thumbnail-btn {
   // Icon button styling inherited from .app__icon-btn
-  background: rgba(156, 39, 176, 0.2);
-  border-color: rgba(156, 39, 176, 0.4);
+  background: var(--mieweb-primary-100, rgba(156, 39, 176, 0.2));
+  border-color: var(--mieweb-primary-300, rgba(156, 39, 176, 0.4));
 
   &:hover:not(:disabled) {
-    background: rgba(156, 39, 176, 0.3);
-    border-color: rgba(156, 39, 176, 0.6);
+    background: var(--mieweb-primary-200, rgba(156, 39, 176, 0.3));
+    border-color: var(--mieweb-primary-400, rgba(156, 39, 176, 0.6));
   }
 
   &--loading {
-    background: rgba(255, 193, 7, 0.2);
-    border-color: rgba(255, 193, 7, 0.4);
+    background: var(--mieweb-warning, rgba(255, 193, 7, 0.2));
+    border-color: var(--mieweb-warning, rgba(255, 193, 7, 0.4));
   }
 
   &--success {
-    background: rgba(76, 175, 80, 0.2);
-    border-color: rgba(76, 175, 80, 0.4);
+    background: var(--mieweb-success, rgba(76, 175, 80, 0.2));
+    border-color: var(--mieweb-success, rgba(76, 175, 80, 0.4));
   }
 
   &--error {
-    background: rgba(244, 67, 54, 0.2);
-    border-color: rgba(244, 67, 54, 0.4);
+    background: var(--mieweb-destructive, rgba(244, 67, 54, 0.2));
+    border-color: var(--mieweb-destructive, rgba(244, 67, 54, 0.4));
   }
 }
 
@@ -529,21 +554,21 @@
 .app__toggle {
   padding: 6px 12px;
   background: transparent;
-  color: #aaa;
-  border: 1px solid #3a3a5a;
+  color: var(--mieweb-muted-foreground, #aaa);
+  border: 1px solid var(--mieweb-border, #3a3a5a);
   border-radius: 4px;
   font-size: 13px;
   cursor: pointer;
   
   &:hover {
-    color: white;
-    border-color: #5a5a7a;
+    color: var(--mieweb-foreground, #fff);
+    border-color: var(--mieweb-primary-500, #5a5a7a);
   }
   
   &--active {
-    background: #2196F3;
-    color: white;
-    border-color: #2196F3;
+    background: var(--mieweb-primary-500, #2196F3);
+    color: var(--mieweb-primary-foreground, #fff);
+    border-color: var(--mieweb-primary-500, #2196F3);
   }
 
   &--disabled,
@@ -552,8 +577,8 @@
     cursor: not-allowed;
     
     &:hover {
-      color: #aaa;
-      border-color: #3a3a5a;
+      color: var(--mieweb-muted-foreground, #aaa);
+      border-color: var(--mieweb-border, #3a3a5a);
     }
   }
 }
@@ -562,10 +587,10 @@
   position: absolute;
   top: 48px;
   left: 16px;
-  background: #1a1a2e;
-  border: 1px solid #2a2a4a;
+  background: var(--mieweb-card, #1a1a2e);
+  border: 1px solid var(--mieweb-border, #2a2a4a);
   border-radius: 6px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  box-shadow: var(--mieweb-shadow-dropdown, 0 4px 16px rgba(0, 0, 0, 0.4));
   z-index: 100;
   overflow: hidden;
 }
@@ -576,24 +601,24 @@
   padding: 12px 16px;
   background: transparent;
   border: none;
-  color: white;
+  color: var(--mieweb-foreground, #fff);
   font-size: 14px;
   text-align: left;
   cursor: pointer;
   
   &:hover {
-    background: rgba(255, 255, 255, 0.1);
+    background: var(--mieweb-muted, rgba(255, 255, 255, 0.1));
   }
   
   &:not(:last-child) {
-    border-bottom: 1px solid #2a2a4a;
+    border-bottom: 1px solid var(--mieweb-border, #2a2a4a);
   }
   
   &--danger {
-    color: #ef5350;
+    color: var(--mieweb-destructive, #ef5350);
     
     &:hover {
-      background: rgba(239, 83, 80, 0.15);
+      background: var(--mieweb-destructive, rgba(239, 83, 80, 0.15));
     }
   }
 }
@@ -603,14 +628,14 @@
   justify-content: space-between;
   align-items: center;
   padding: 8px 16px;
-  background: #c62828;
-  color: white;
+  background: var(--mieweb-destructive, #c62828);
+  color: var(--mieweb-destructive-foreground, #fff);
   font-size: 14px;
   
   button {
     background: transparent;
     border: none;
-    color: white;
+    color: var(--mieweb-destructive-foreground, #fff);
     font-size: 16px;
     cursor: pointer;
     padding: 4px 8px;
@@ -630,6 +655,20 @@
   }
 }
 
+// MediaEditor (ui-staging) fills the whole content pane when viewing
+.app__editor-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+// Keep MediaEditor mounted (preserving edit/UI state) while the data view shows
+.app__hidden-editor {
+  display: none;
+}
+
 .app__media-pane {
   flex-shrink: 0;
   display: flex;
@@ -643,7 +682,7 @@
 .app__split-bar {
   flex-shrink: 0;
   height: 8px;
-  background: #1a1a2e;
+  background: var(--mieweb-card, #1a1a2e);
   cursor: ns-resize;
   display: flex;
   align-items: center;
@@ -655,20 +694,20 @@
 
   &:hover,
   &:active {
-    background: #2a2a4e;
+    background: var(--mieweb-muted, #2a2a4e);
   }
 }
 
 .app__split-bar-handle {
   width: 40px;
   height: 4px;
-  background: #4a4a6a;
+  background: var(--mieweb-border, #4a4a6a);
   border-radius: 2px;
   transition: background-color 0.2s;
 
   .app__split-bar:hover &,
   .app__split-bar:active & {
-    background: #6a6a8a;
+    background: var(--mieweb-muted-foreground, #6a6a8a);
   }
 }
 
@@ -676,7 +715,7 @@
   flex: 1;
   display: flex;
   flex-direction: column;
-  background: #16213e;
+  background: var(--mieweb-card, #16213e);
   overflow: hidden;
   min-height: 100px;
 }
@@ -686,8 +725,8 @@
   justify-content: space-between;
   align-items: center;
   padding: 8px 16px;
-  background: rgba(0, 0, 0, 0.2);
-  border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  background: var(--mieweb-muted, rgba(0, 0, 0, 0.2));
+  border-bottom: 1px solid var(--mieweb-border, rgba(255, 255, 255, 0.1));
   flex-shrink: 0;
 }
 
@@ -698,17 +737,17 @@
   width: 32px;
   height: 32px;
   padding: 0;
-  background: #2a2a4a;
-  color: white;
-  border: 1px solid #3a3a5a;
+  background: var(--mieweb-input, #2a2a4a);
+  color: var(--mieweb-foreground, #fff);
+  border: 1px solid var(--mieweb-border, #3a3a5a);
   border-radius: 4px;
   font-size: 16px;
   cursor: pointer;
   transition: all 0.15s ease;
   
   &:hover {
-    background: #3a3a5a;
-    border-color: #5a5a7a;
+    background: var(--mieweb-muted, #3a3a5a);
+    border-color: var(--mieweb-primary-500, #5a5a7a);
   }
   
   &:disabled {
@@ -725,12 +764,12 @@
   // Icon button styling inherited from .app__icon-btn
   
   &--active {
-    background: #2196F3;
-    border-color: #2196F3;
+    background: var(--mieweb-primary-500, #2196F3);
+    border-color: var(--mieweb-primary-500, #2196F3);
     
     &:hover {
-      background: #1976D2;
-      border-color: #1976D2;
+      background: var(--mieweb-primary-600, #1976D2);
+      border-color: var(--mieweb-primary-600, #1976D2);
     }
   }
 }
@@ -741,7 +780,7 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #aaa;
+  color: var(--mieweb-muted-foreground, #aaa);
   text-align: center;
   padding: 24px;
   
@@ -763,7 +802,7 @@
   align-items: center;
   justify-content: center;
   height: 100%;
-  color: #aaa;
+  color: var(--mieweb-muted-foreground, #aaa);
   gap: 16px;
   
   p {
@@ -775,8 +814,8 @@
 .app__spinner {
   width: 40px;
   height: 40px;
-  border: 3px solid #2a2a4a;
-  border-top-color: #2196F3;
+  border: 3px solid var(--mieweb-muted, #2a2a4a);
+  border-top-color: var(--mieweb-primary-500, #2196F3);
   border-radius: 50%;
   animation: spin 1s linear infinite;
 }
@@ -802,21 +841,21 @@
 }
 
 .api-key-modal {
-  background: #1a1a2e;
+  background: var(--mieweb-card, #1a1a2e);
   border-radius: 12px;
   padding: 24px;
   width: 90%;
   max-width: 400px;
-  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--mieweb-shadow-modal, 0 4px 20px rgba(0, 0, 0, 0.5));
 
   h3 {
-    color: white;
+    color: var(--mieweb-card-foreground, #fff);
     margin: 0 0 12px 0;
     font-size: 20px;
   }
 
   p {
-    color: #aaa;
+    color: var(--mieweb-muted-foreground, #aaa);
     margin: 0 0 16px 0;
     font-size: 14px;
   }
@@ -824,16 +863,16 @@
   &__input {
     width: 100%;
     padding: 12px;
-    border: 1px solid #2a2a4a;
+    border: 1px solid var(--mieweb-input, #2a2a4a);
     border-radius: 6px;
-    background: #0f0f1a;
-    color: white;
+    background: var(--mieweb-background, #0f0f1a);
+    color: var(--mieweb-foreground, #fff);
     font-size: 14px;
     box-sizing: border-box;
 
     &:focus {
       outline: none;
-      border-color: #2196F3;
+      border-color: var(--mieweb-ring, #2196F3);
     }
   }
 
@@ -846,16 +885,16 @@
 
   &__cancel {
     padding: 10px 20px;
-    border: 1px solid #2a2a4a;
+    border: 1px solid var(--mieweb-border, #2a2a4a);
     border-radius: 6px;
     background: transparent;
-    color: #aaa;
+    color: var(--mieweb-muted-foreground, #aaa);
     font-size: 14px;
     cursor: pointer;
 
     &:hover {
-      background: #2a2a4a;
-      color: white;
+      background: var(--mieweb-muted, #2a2a4a);
+      color: var(--mieweb-foreground, #fff);
     }
   }
 
@@ -863,13 +902,13 @@
     padding: 10px 20px;
     border: none;
     border-radius: 6px;
-    background: #2196F3;
-    color: white;
+    background: var(--mieweb-primary-500, #2196F3);
+    color: var(--mieweb-primary-foreground, #fff);
     font-size: 14px;
     cursor: pointer;
 
     &:hover {
-      background: #1976D2;
+      background: var(--mieweb-primary-600, #1976D2);
     }
   }
 }
@@ -878,7 +917,7 @@
 .featured-modal {
   &__label {
     display: block;
-    color: #aaa;
+    color: var(--mieweb-muted-foreground, #aaa);
     font-size: 12px;
     margin-bottom: 16px;
     
@@ -895,7 +934,7 @@
       max-width: 100%;
       max-height: 120px;
       border-radius: 6px;
-      border: 1px solid #2a2a4a;
+      border: 1px solid var(--mieweb-border, #2a2a4a);
     }
   }
 }
