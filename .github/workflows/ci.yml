@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - uses: actions/checkout@v4
+    - uses: actions/checkout@v5
 
     # Init only the ui submodule: the repo has a stray gitlink at tools/pulse
     # (no .gitmodules entry) that breaks `submodules: true` checkout.
@@ -19,15 +19,16 @@ jobs:
       run: git submodule update --init ui
 
     - name: Setup Node.js
-      uses: actions/setup-node@v4
+      uses: actions/setup-node@v5
       with:
-        node-version: '20'
+        node-version: '22'
         cache: 'npm'
 
-    - name: Setup pnpm (for the ui submodule)
-      uses: pnpm/action-setup@v4
-      with:
-        package_json_file: ui/package.json
+    # Use corepack (bundled with Node) to provide the pnpm version pinned in
+    # ui/package.json's "packageManager" field — avoids the deprecated
+    # pnpm/action-setup action that still ran on Node 20.
+    - name: Enable pnpm (for the ui submodule)
+      run: corepack enable
 
     - name: Build @mieweb/ui submodule
       run: cd ui && pnpm install --frozen-lockfile && pnpm build
