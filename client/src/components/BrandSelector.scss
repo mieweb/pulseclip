@@ -1,0 +1,20 @@
+// Matches the ghost styling of header links/ThemeToggle on the dark headers
+.brand-selector {
+  background: transparent;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 6px;
+  color: rgba(255, 255, 255, 0.8);
+  font-size: 0.8rem;
+  padding: 4px 6px;
+  cursor: pointer;
+
+  &:hover {
+    background: rgba(255, 255, 255, 0.1);
+    color: #fff;
+  }
+
+  option {
+    color: initial;
+    background: initial;
+  }
+}

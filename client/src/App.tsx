@@ -5,6 +5,7 @@ import { PulseCamButton } from './components/PulseCamButton';
 import { MediaPlayer, type MediaPlayerRef } from './ui-staging/MediaPlayer';
 import { MediaEditor } from './ui-staging/MediaEditor';
 import { ThemeToggle } from '@mieweb/ui/components/ThemeProvider';
+import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
 import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
@@ -27,6 +28,9 @@ interface VersionInfo {
 }
 
 declare const __BUILD_COMMIT_HASH__: string | undefined;
+
+// Apply the persisted brand color theme before first paint of the app tree
+restoreBrand();
 
 function App() {
   const { artipodId: urlArtipodId } = useParams<{ artipodId: string }>();
@@ -804,6 +808,7 @@ function App() {
             <p className="app__banner-tagline">Word-level transcripts for audio &amp; video</p>
           </div>
           <nav className="app__banner-links" aria-label="Project links">
+            <BrandSelector />
             <ThemeToggle
               mode="three-way"
               variant="ghost"
@@ -987,6 +992,7 @@ function App() {
         </div>
 
         <div className="app__toolbar-right">
+          <BrandSelector />
           <ThemeToggle
             mode="three-way"
             variant="ghost"
