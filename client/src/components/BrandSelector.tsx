@@ -1,6 +1,6 @@
 import { useEffect, useState, type FC } from 'react';
+import { Select } from '@mieweb/ui/components/Select';
 import { brands, generateBrandCSS } from '@mieweb/ui/brands';
-import './BrandSelector.scss';
 
 const STORAGE_KEY = 'pulseclip_brand';
 const STYLE_ID = 'pulseclip-brand-css';
@@ -16,6 +16,10 @@ const BRAND_LABELS: Record<string, string> = {
   waggleline: 'Waggleline',
   default: 'Default',
 };
+
+const BRAND_OPTIONS = Object.keys(brands)
+  .sort((a, b) => (BRAND_LABELS[a] || a).localeCompare(BRAND_LABELS[b] || b))
+  .map((key) => ({ value: key, label: BRAND_LABELS[key] || key }));
 
 /** Load a brand's config and inject its CSS variables, overriding the base brand */
 async function applyBrand(key: string): Promise<void> {
@@ -49,20 +53,14 @@ export const BrandSelector: FC = () => {
   }, [brand]);
 
   return (
-    <select
-      className="brand-selector"
+    <Select
+      options={BRAND_OPTIONS}
       value={brand}
-      onChange={(e) => setBrand(e.target.value)}
-      aria-label="Brand color theme"
-      title="Brand color theme"
-    >
-      {Object.keys(brands)
-        .sort((a, b) => (BRAND_LABELS[a] || a).localeCompare(BRAND_LABELS[b] || b))
-        .map((key) => (
-          <option key={key} value={key}>
-            {BRAND_LABELS[key] || key}
-          </option>
-        ))}
-    </select>
+      onValueChange={setBrand}
+      size="sm"
+      label="Brand color theme"
+      hideLabel
+      className="w-36"
+    />
   );
 };
