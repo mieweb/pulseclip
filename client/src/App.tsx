@@ -5,6 +5,13 @@ import { PulseCamButton } from './components/PulseCamButton';
 import { MediaPlayer, type MediaPlayerRef } from '@mieweb/ui/components/MediaPlayer';
 import { MediaEditor } from '@mieweb/ui/components/MediaEditor';
 import { ThemeToggle } from '@mieweb/ui/components/ThemeProvider';
+import { Card, CardContent, CardMedia } from '@mieweb/ui/components/Card';
+import { Button } from '@mieweb/ui/components/Button';
+import { Alert } from '@mieweb/ui/components/Alert';
+import { Input } from '@mieweb/ui/components/Input';
+import { Modal, ModalHeader, ModalTitle, ModalClose, ModalBody, ModalFooter } from '@mieweb/ui/components/Modal';
+import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
+import { AudioLines, Film, Zap, Scissors, Type } from 'lucide-react';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
 import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
@@ -28,6 +35,42 @@ interface VersionInfo {
 }
 
 declare const __BUILD_COMMIT_HASH__: string | undefined;
+
+/** Landing-page feature highlights */
+const FEATURES = [
+  { Icon: Zap, title: 'Transcribed Instantly', desc: 'Upload and get word-level transcripts in seconds' },
+  { Icon: Scissors, title: 'Word-Level Editing', desc: 'Delete fillers and dead air with a single click' },
+  { Icon: Type, title: 'Edit Like Text', desc: 'Cut and paste video as simply as a text editor' },
+] as const;
+
+/** Featured pulse card with graceful fallback when the thumbnail is missing or unreachable */
+function FeaturedPulseCard({ pulse, onOpen }: { pulse: FeaturedPulse; onOpen: () => void }) {
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const showThumb = pulse.thumbnail && !thumbFailed;
+  return (
+    <a
+      href={`/artipod/${pulse.artipodId}`}
+      className="block w-56 no-underline"
+      onClick={(e) => {
+        e.preventDefault();
+        onOpen();
+      }}
+    >
+      <Card interactive padding="none" className="overflow-hidden">
+        {showThumb ? (
+          <CardMedia src={pulse.thumbnail} alt="" aspectRatio="video" onError={() => setThumbFailed(true)} />
+        ) : (
+          <div className="flex aspect-video items-center justify-center bg-muted">
+            <Film className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
+          </div>
+        )}
+        <CardContent className="p-3">
+          <span className="text-sm font-medium text-foreground">{pulse.title}</span>
+        </CardContent>
+      </Card>
+    </a>
+  );
+}
 
 // Apply the persisted brand color theme before first paint of the app tree
 restoreBrand();
@@ -702,93 +745,97 @@ function App() {
   };
 
   // Render API Key Modal
-  const renderApiKeyModal = () => {
-    if (!showApiKeyModal) return null;
-    return (
-      <div className="api-key-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="api-key-modal-title">
-        <div className="api-key-modal">
-          <h3 id="api-key-modal-title">API Key Required</h3>
-          <p>Enter your API key to upload files and use transcription.</p>
-          <input
+  const renderApiKeyModal = () => (
+    <Modal open={showApiKeyModal} onOpenChange={(open) => !open && setShowApiKeyModal(false)} size="sm">
+      <ModalHeader>
+        <ModalTitle>API Key Required</ModalTitle>
+        <ModalClose />
+      </ModalHeader>
+      <ModalBody>
+        <div className="flex flex-col gap-3">
+          <p className="m-0 text-sm text-muted-foreground">
+            Enter your API key to upload files and use transcription.
+          </p>
+          <Input
             type="password"
+            label="API key"
+            hideLabel
             value={pendingApiKey}
             onChange={(e) => setPendingApiKey(e.target.value)}
             placeholder="Enter API key"
-            className="api-key-modal__input"
             onKeyDown={(e) => e.key === 'Enter' && handleApiKeySubmit()}
             autoFocus
           />
-          <div className="api-key-modal__actions">
-            <button onClick={() => setShowApiKeyModal(false)} className="api-key-modal__cancel">
-              Cancel
-            </button>
-            <button onClick={handleApiKeySubmit} className="api-key-modal__submit">
-              Save
-            </button>
-          </div>
         </div>
-      </div>
-    );
-  };
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={() => setShowApiKeyModal(false)}>
+          Cancel
+        </Button>
+        <Button onClick={handleApiKeySubmit}>Save</Button>
+      </ModalFooter>
+    </Modal>
+  );
 
   // Render Featured Modal
-  const renderFeaturedModal = () => {
-    if (!showFeaturedModal) return null;
-    return (
-      <div className="api-key-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="featured-modal-title">
-        <div className="api-key-modal featured-modal">
-          <h3 id="featured-modal-title">{isCurrentPulseFeatured ? 'Edit Featured Pulse' : 'Mark as Featured'}</h3>
-          <p>Set a display title and optional thumbnail for this featured pulse.</p>
-          <label className="featured-modal__label">
-            Title
-            <input
-              type="text"
-              value={featuredTitle}
-              onChange={(e) => setFeaturedTitle(e.target.value)}
-              placeholder="Enter pulse title"
-              className="api-key-modal__input"
-              onKeyDown={(e) => e.key === 'Enter' && handleFeaturedSubmit()}
-              autoFocus
-            />
-          </label>
-          <label className="featured-modal__label">
-            Thumbnail URL (optional)
-            <input
-              type="url"
-              value={featuredThumbnail}
-              onChange={(e) => setFeaturedThumbnail(e.target.value)}
-              placeholder="https://example.com/thumbnail.jpg"
-              className="api-key-modal__input"
-            />
-          </label>
+  const renderFeaturedModal = () => (
+    <Modal open={showFeaturedModal} onOpenChange={(open) => !open && setShowFeaturedModal(false)} size="sm">
+      <ModalHeader>
+        <ModalTitle>{isCurrentPulseFeatured ? 'Edit Featured Pulse' : 'Mark as Featured'}</ModalTitle>
+        <ModalClose />
+      </ModalHeader>
+      <ModalBody>
+        <div className="flex flex-col gap-4">
+          <p className="m-0 text-sm text-muted-foreground">
+            Set a display title and optional thumbnail for this featured pulse.
+          </p>
+          <Input
+            type="text"
+            label="Title"
+            value={featuredTitle}
+            onChange={(e) => setFeaturedTitle(e.target.value)}
+            placeholder="Enter pulse title"
+            onKeyDown={(e) => e.key === 'Enter' && handleFeaturedSubmit()}
+            autoFocus
+          />
+          <Input
+            type="url"
+            label="Thumbnail URL (optional)"
+            value={featuredThumbnail}
+            onChange={(e) => setFeaturedThumbnail(e.target.value)}
+            placeholder="https://example.com/thumbnail.jpg"
+          />
           {featuredThumbnail && (
-            <div className="featured-modal__preview">
-              <img src={featuredThumbnail} alt="Thumbnail preview" onError={(e) => (e.currentTarget.style.display = 'none')} />
+            <div className="overflow-hidden rounded-lg border border-border">
+              <img
+                src={featuredThumbnail}
+                alt="Thumbnail preview"
+                className="block max-h-40 w-full object-cover"
+                onError={(e) => (e.currentTarget.style.display = 'none')}
+              />
             </div>
           )}
-          <div className="api-key-modal__actions">
-            <button onClick={() => setShowFeaturedModal(false)} className="api-key-modal__cancel">
-              Cancel
-            </button>
-            <button onClick={handleFeaturedSubmit} className="api-key-modal__submit">
-              Save
-            </button>
-          </div>
         </div>
-      </div>
-    );
-  };
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={() => setShowFeaturedModal(false)}>
+          Cancel
+        </Button>
+        <Button onClick={handleFeaturedSubmit}>Save</Button>
+      </ModalFooter>
+    </Modal>
+  );
 
   // Loading view - when restoring pulse from URL
   if (viewState === 'loading') {
     return (
       <div className="app app--upload">
-        <div className="app__upload-container">
-          <h1 className="app__title">🎙️ PulseClip</h1>
-          <div className="app__loading">
-            <div className="app__spinner" />
-            <p>Loading pulse...</p>
-          </div>
+        <div className="flex min-h-screen flex-col items-center justify-center gap-6">
+          <h1 className="m-0 flex items-center gap-2 text-2xl font-semibold text-foreground">
+            <AudioLines className="h-7 w-7 text-primary-800 dark:text-primary-400" aria-hidden="true" />
+            PulseClip
+          </h1>
+          <SpinnerWithLabel size="lg" label="Loading pulse..." />
         </div>
       </div>
     );
@@ -802,34 +849,37 @@ function App() {
         {renderFeaturedModal()}
         
         {/* Sticky header banner */}
-        <header className="app__banner">
-          <div className="app__banner-content">
-            <h1 className="app__banner-title">🎙️ PulseClip</h1>
-            <p className="app__banner-tagline">Word-level transcripts for audio &amp; video</p>
+        <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
+          <div className="flex items-baseline gap-3">
+            <h1 className="m-0 flex items-center gap-2 text-lg font-semibold text-foreground">
+              <AudioLines className="h-5 w-5 shrink-0 self-center text-primary-800 dark:text-primary-400" aria-hidden="true" />
+              PulseClip
+            </h1>
+            <p className="m-0 hidden text-sm text-muted-foreground md:block">Word-level transcripts for audio &amp; video</p>
           </div>
-          <nav className="app__banner-links" aria-label="Project links">
+          <nav className="flex flex-wrap items-center gap-1" aria-label="Project links">
             <BrandSelector />
             <ThemeToggle
               mode="three-way"
               variant="ghost"
               aria-label="Toggle color theme"
             />
-            <a href="https://github.com/mieweb/pulseclip" target="_blank" rel="noopener noreferrer" className="app__banner-link">
+            <a href="https://github.com/mieweb/pulseclip" target="_blank" rel="noopener noreferrer" className="rounded-md px-2 py-1.5 text-sm text-muted-foreground no-underline transition-colors hover:bg-muted hover:text-foreground">
               GitHub
             </a>
-            <a href="https://github.com/mieweb/pulseclip/blob/main/IMPLEMENTATION.md" target="_blank" rel="noopener noreferrer" className="app__banner-link">
+            <a href="https://github.com/mieweb/pulseclip/blob/main/IMPLEMENTATION.md" target="_blank" rel="noopener noreferrer" className="rounded-md px-2 py-1.5 text-sm text-muted-foreground no-underline transition-colors hover:bg-muted hover:text-foreground">
               Docs
             </a>
-            <a href="https://github.com/mieweb/pulseclip/issues/new" target="_blank" rel="noopener noreferrer" className="app__banner-link">
+            <a href="https://github.com/mieweb/pulseclip/issues/new" target="_blank" rel="noopener noreferrer" className="rounded-md px-2 py-1.5 text-sm text-muted-foreground no-underline transition-colors hover:bg-muted hover:text-foreground">
               Report Issue
             </a>
             {versionInfo && (
-              <span className="app__banner-version">
+              <span className="ml-2 flex items-center gap-2 border-l border-border pl-3 text-xs">
                 <a
                   href={versionInfo.commitUrl || '#'}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="app__banner-link app__banner-link--mono"
+                  className="font-mono text-muted-foreground no-underline hover:text-foreground"
                   title={`Commit: ${versionInfo.commitHash}`}
                 >
                   {versionInfo.commitHash.slice(0, 7)}
@@ -839,7 +889,7 @@ function App() {
                     href="https://github.com/mieweb/pulseclip/blob/main/RELEASE_NOTES.md"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="app__banner-link"
+                    className="text-muted-foreground no-underline hover:text-foreground"
                     title="Release Notes"
                   >
                     {new Date(versionInfo.commitDate).toLocaleDateString()}
@@ -850,75 +900,50 @@ function App() {
           </nav>
         </header>
 
-        <main className="app__landing">
-          {/* Featured pulses - prominent */}
-          {featuredPulses.length > 0 && (
-            <section className="app__featured" aria-label="Featured pulses">
-              <h2 className="app__featured-title">Featured Pulses</h2>
-              <div className="app__featured-grid">
-                {featuredPulses.map((pulse) => (
-                  <a
-                    key={pulse.artipodId}
-                    href={`/artipod/${pulse.artipodId}`}
-                    className="app__featured-card"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      navigate(`/artipod/${pulse.artipodId}`);
-                    }}
-                  >
-                    {pulse.thumbnail ? (
-                      <img src={pulse.thumbnail} alt="" className="app__featured-thumb" />
-                    ) : (
-                      <div className="app__featured-placeholder">🎬</div>
-                    )}
-                    <span className="app__featured-pulse-title">{pulse.title}</span>
-                  </a>
-                ))}
-              </div>
-            </section>
-          )}
+        <main className="mx-auto w-full max-w-5xl px-6 py-10">
+          <div className="flex flex-col gap-12">
+            {/* Featured pulses - prominent */}
+            {featuredPulses.length > 0 && (
+              <section aria-label="Featured pulses">
+                <h2 className="m-0 mb-4 text-center text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+                  Featured Pulses
+                </h2>
+                <div className="flex flex-wrap justify-center gap-4">
+                  {featuredPulses.map((pulse) => (
+                    <FeaturedPulseCard
+                      key={pulse.artipodId}
+                      pulse={pulse}
+                      onOpen={() => navigate(`/artipod/${pulse.artipodId}`)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
 
-          {/* Compact upload area */}
-          <section className="app__upload-section">
-            <h2 className="app__upload-heading">Upload Your Own</h2>
-            <div className="app__upload-options">
-              <div className="app__pulsecam-container">
+            {/* Compact upload area */}
+            <section aria-label="Upload">
+              <h2 className="m-0 mb-4 text-center text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+                Upload Your Own
+              </h2>
+              <div className="grid items-stretch gap-6 md:grid-cols-2">
                 <PulseCamButton onError={(err) => setError(err)} />
-                <p className="app__pulsecam-hint">Record directly from your phone</p>
-              </div>
-              <div className="app__upload-divider">
-                <span>or</span>
-              </div>
-              <div className="app__upload-container">
                 <FileUpload onFileUploaded={handleFileUploaded} disabled={false} apiKey={apiKey} onAuthError={handleAuthError} />
               </div>
-            </div>
-          </section>
+            </section>
 
-          {/* Features for first-time visitors */}
-          <section className="app__features" aria-label="Features">
-            <div className="app__feature">
-              <span className="app__feature-icon">⚡</span>
-              <h3 className="app__feature-title">Transcribed Instantly</h3>
-              <p className="app__feature-desc">Upload and get word-level transcripts in seconds</p>
-            </div>
-            <div className="app__feature">
-              <span className="app__feature-icon">✂️</span>
-              <h3 className="app__feature-title">Word-Level Editing</h3>
-              <p className="app__feature-desc">Delete fillers and dead air with a single click</p>
-            </div>
-            <div className="app__feature">
-              <span className="app__feature-icon">📝</span>
-              <h3 className="app__feature-title">Edit Like Text</h3>
-              <p className="app__feature-desc">Cut and paste video as simply as a text editor</p>
-            </div>
-          </section>
+            {/* Features for first-time visitors */}
+            <section aria-label="Features" className="grid gap-4 md:grid-cols-3">
+              {FEATURES.map(({ Icon, title, desc }) => (
+                <Card key={title} padding="md" className="text-center">
+                  <Icon className="mx-auto h-6 w-6 text-primary-800 dark:text-primary-400" aria-hidden="true" />
+                  <h3 className="m-0 mt-3 text-sm font-semibold text-foreground">{title}</h3>
+                  <p className="m-0 mt-1 text-sm text-muted-foreground">{desc}</p>
+                </Card>
+              ))}
+            </section>
 
-          {error && (
-            <div className="app__error">
-              <strong>Error:</strong> {error}
-            </div>
-          )}
+            {error && <Alert variant="danger">{error}</Alert>}
+          </div>
         </main>
       </div>
     );
