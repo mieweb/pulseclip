@@ -52,12 +52,13 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [debugMode, setDebugMode] = useState(isDebugEnabled());
-  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('pulseclip_api_key') || '');
-  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
-  const [pendingApiKey, setPendingApiKey] = useState('');
   const [featuredPulses, setFeaturedPulses] = useState<FeaturedPulse[]>([]);
   const [isCurrentPulseFeatured, setIsCurrentPulseFeatured] = useState(false);
   const [showFeaturedModal, setShowFeaturedModal] = useState(false);
+  const [showShareModal, setShowShareModal] = useState(false);
+  const [shareUrl, setShareUrl] = useState<string | null>(null);
+  const [shareError, setShareError] = useState<string | null>(null);
+  const [isCreatingShare, setIsCreatingShare] = useState(false);
   const [featuredTitle, setFeaturedTitle] = useState('');
   const [featuredThumbnail, setFeaturedThumbnail] = useState('');
   const [splitPosition, setSplitPosition] = useState(50); // Percentage for media pane height
@@ -225,7 +226,7 @@ function App() {
 
   // Save editor state (debounced)
   const saveEditorState = useCallback((editedWords: EditableWord[], undoStack: EditableWord[][]) => {
-    if (!artipodId || !apiKey) return;
+    if (!artipodId) return;
     
     // Clear any pending save
     if (saveTimeoutRef.current) {
@@ -238,7 +239,6 @@ function App() {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
         },
         body: JSON.stringify({
           editedWords,
@@ -255,7 +255,7 @@ function App() {
           console.error('Failed to save edits:', err);
         });
     }, 1000);
-  }, [artipodId, apiKey]);
+  }, [artipodId]);
 
   // Cleanup save timeout on unmount
   useEffect(() => {
@@ -361,16 +361,11 @@ function App() {
     setError(null);
 
     try {
-      const headers: HeadersInit = {
-        'Content-Type': 'application/json',
-      };
-      if (apiKey) {
-        headers['X-API-Key'] = apiKey;
-      }
-
       const response = await fetch('/api/transcribe', {
         method: 'POST',
-        headers,
+        headers: {
+          'Content-Type': 'application/json',
+        },
         body: JSON.stringify({
           mediaUrl,
           providerId: selectedProvider,
@@ -381,11 +376,6 @@ function App() {
           },
         }),
       });
-
-      if (response.status === 401) {
-        setShowApiKeyModal(true);
-        throw new Error('API key required');
-      }
 
       // Handle async transcription (large files)
       if (response.status === 202) {
@@ -439,10 +429,9 @@ function App() {
     // Clear saved editor state when re-transcribing
     setSavedEditorState(null);
     // Also delete saved edits from server
-    if (artipodId && apiKey) {
+    if (artipodId) {
       fetch(`/api/artipod/${artipodId}/edits`, {
         method: 'DELETE',
-        headers: { 'X-API-Key': apiKey },
       }).catch((err) => console.error('Failed to delete saved edits:', err));
     }
     handleTranscribe(true);
@@ -468,30 +457,15 @@ function App() {
     }
   }, [mediaUrl, selectedProvider, transcribing, transcriptionResult, loading]);
 
-  const handleAuthError = () => {
-    setShowApiKeyModal(true);
-  };
-
   const handleToggleFeatured = async () => {
-    if (!artipodId || !apiKey) {
-      setShowApiKeyModal(true);
-      return;
-    }
+    if (!artipodId) return;
 
     if (isCurrentPulseFeatured) {
       // Remove from featured
       try {
         const response = await fetch(`/api/featured/${artipodId}`, {
           method: 'DELETE',
-          headers: {
-            'X-API-Key': apiKey,
-          },
         });
-
-        if (response.status === 401) {
-          setShowApiKeyModal(true);
-          return;
-        }
 
         if (response.ok) {
           setIsCurrentPulseFeatured(false);
@@ -511,17 +485,13 @@ function App() {
   };
 
   const handleFeaturedSubmit = async () => {
-    if (!artipodId || !apiKey) {
-      setShowApiKeyModal(true);
-      return;
-    }
+    if (!artipodId) return;
 
     try {
       const response = await fetch('/api/featured', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
         },
         body: JSON.stringify({
           artipodId,
@@ -529,11 +499,6 @@ function App() {
           thumbnail: featuredThumbnail.trim() || undefined,
         }),
       });
-
-      if (response.status === 401) {
-        setShowApiKeyModal(true);
-        return;
-      }
 
       if (response.ok) {
         const data = await response.json();
@@ -551,13 +516,35 @@ function App() {
     }
   };
 
+  const handleOpenShareModal = () => {
+    setShareUrl(null);
+    setShareError(null);
+    setShowShareModal(true);
+  };
+
+  const handleCreateShare = async () => {
+    if (!artipodId) return;
+
+    setIsCreatingShare(true);
+    setShareError(null);
+    try {
+      const response = await fetch(`/api/artipod/${artipodId}/share`, {
+        method: 'POST',
+      });
+      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(data.error || 'Failed to create share link');
+      }
+      setShareUrl(data.url);
+    } catch (err) {
+      setShareError(err instanceof Error ? err.message : 'Failed to create share link');
+    } finally {
+      setIsCreatingShare(false);
+    }
+  };
+
   const handleDeletePulse = async () => {
     if (!artipodId) return;
-    
-    if (!apiKey) {
-      setShowApiKeyModal(true);
-      return;
-    }
 
     // Confirm deletion
     if (!window.confirm(`Are you sure you want to delete this pulse? This cannot be undone.`)) {
@@ -567,15 +554,7 @@ function App() {
     try {
       const response = await fetch(`/api/artipod/${artipodId}`, {
         method: 'DELETE',
-        headers: {
-          'X-API-Key': apiKey,
-        },
       });
-
-      if (response.status === 401) {
-        setShowApiKeyModal(true);
-        return;
-      }
 
       if (response.ok) {
         // Remove from featured if it was there
@@ -594,10 +573,7 @@ function App() {
 
   const handleCaptureThumbnail = async (timestampMs: number): Promise<boolean> => {
     const media = getMediaElement();
-    if (!media || !artipodId || !apiKey) {
-      if (!apiKey) setShowApiKeyModal(true);
-      return false;
-    }
+    if (!media || !artipodId) return false;
 
     const video = media as HTMLVideoElement;
     if (video.tagName !== 'VIDEO') {
@@ -638,18 +614,12 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
         },
         body: JSON.stringify({
           imageData,
           artipodId,
         }),
       });
-
-      if (uploadResponse.status === 401) {
-        setShowApiKeyModal(true);
-        return false;
-      }
 
       if (!uploadResponse.ok) {
         const data = await uploadResponse.json();
@@ -664,7 +634,6 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
         },
         body: JSON.stringify({
           artipodId,
@@ -689,46 +658,6 @@ function App() {
       setError('Failed to capture thumbnail');
       return false;
     }
-  };
-
-  const handleApiKeySubmit = () => {
-    const key = pendingApiKey.trim();
-    if (key) {
-      setApiKey(key);
-      localStorage.setItem('pulseclip_api_key', key);
-    }
-    setShowApiKeyModal(false);
-    setPendingApiKey('');
-  };
-
-  // Render API Key Modal
-  const renderApiKeyModal = () => {
-    if (!showApiKeyModal) return null;
-    return (
-      <div className="api-key-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="api-key-modal-title">
-        <div className="api-key-modal">
-          <h3 id="api-key-modal-title">API Key Required</h3>
-          <p>Enter your API key to upload files and use transcription.</p>
-          <input
-            type="password"
-            value={pendingApiKey}
-            onChange={(e) => setPendingApiKey(e.target.value)}
-            placeholder="Enter API key"
-            className="api-key-modal__input"
-            onKeyDown={(e) => e.key === 'Enter' && handleApiKeySubmit()}
-            autoFocus
-          />
-          <div className="api-key-modal__actions">
-            <button onClick={() => setShowApiKeyModal(false)} className="api-key-modal__cancel">
-              Cancel
-            </button>
-            <button onClick={handleApiKeySubmit} className="api-key-modal__submit">
-              Save
-            </button>
-          </div>
-        </div>
-      </div>
-    );
   };
 
   // Render Featured Modal
@@ -779,6 +708,46 @@ function App() {
     );
   };
 
+  const renderShareModal = () => {
+    if (!showShareModal) return null;
+    return (
+      <div className="api-key-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="share-modal-title">
+        <div className="api-key-modal share-modal">
+          {shareUrl ? (
+            <>
+              <h3 id="share-modal-title">Share link created</h3>
+              <p>Anyone with this link can view this recording.</p>
+              <a className="share-modal__link" href={shareUrl} target="_blank" rel="noopener noreferrer">
+                {shareUrl}
+              </a>
+              <div className="api-key-modal__actions">
+                <button onClick={() => setShowShareModal(false)} className="api-key-modal__submit">
+                  Done
+                </button>
+              </div>
+            </>
+          ) : (
+            <>
+              <h3 id="share-modal-title">Share recording?</h3>
+              <p>
+                These recordings may contain protected health information (PHI). Sharing a recording containing PHI with a third party may violate HIPAA.
+              </p>
+              {shareError && <p className="share-modal__error" role="alert">{shareError}</p>}
+              <div className="api-key-modal__actions">
+                <button onClick={() => setShowShareModal(false)} className="api-key-modal__cancel" disabled={isCreatingShare}>
+                  No
+                </button>
+                <button onClick={handleCreateShare} className="api-key-modal__submit" disabled={isCreatingShare}>
+                  {isCreatingShare ? 'Creating...' : 'Yes, create link'}
+                </button>
+              </div>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   // Loading view - when restoring pulse from URL
   if (viewState === 'loading') {
     return (
@@ -798,7 +767,6 @@ function App() {
   if (viewState === 'upload') {
     return (
       <div className="app app--upload">
-        {renderApiKeyModal()}
         {renderFeaturedModal()}
         
         {/* Sticky header banner */}
@@ -890,7 +858,7 @@ function App() {
                 <span>or</span>
               </div>
               <div className="app__upload-container">
-                <FileUpload onFileUploaded={handleFileUploaded} disabled={false} apiKey={apiKey} onAuthError={handleAuthError} />
+                <FileUpload onFileUploaded={handleFileUploaded} disabled={false} />
               </div>
             </div>
           </section>
@@ -927,8 +895,8 @@ function App() {
   // Ready/Transcribing/Viewing states - split view
   return (
     <div className="app app--split">
-      {renderApiKeyModal()}
       {renderFeaturedModal()}
+      {renderShareModal()}
       {/* Compact toolbar */}
       <header className="app__toolbar">
         <div className="app__toolbar-left">
@@ -997,6 +965,15 @@ function App() {
             variant="ghost"
             aria-label="Toggle color theme"
           />
+          {artipodId && (
+            <button
+              className="app__share-btn"
+              onClick={handleOpenShareModal}
+              aria-label="Share recording"
+            >
+              Share
+            </button>
+          )}
           {viewState === 'ready' && (
             <>
               <select
