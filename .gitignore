@@ -146,3 +146,4 @@ client/dist/
 test.mov
 server/data/checksums.json
 temp/
+server/models/
