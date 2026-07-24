@@ -1,0 +1,73 @@
+name: Deploy dev
+
+on:
+  push:
+    branches: [ dev ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Init ui submodule
+      run: git submodule update --init ui
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v5
+      with:
+        node-version: '22'
+        cache: 'npm'
+
+    # Same rationale as ci.yml: corepack provides the pnpm version pinned in
+    # ui/package.json's "packageManager" field.
+    - name: Enable pnpm (for the ui submodule)
+      run: corepack enable
+
+    - name: Build @mieweb/ui submodule
+      run: cd ui && pnpm install --frozen-lockfile && pnpm build
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Build server
+      run: npm run build:server
+
+    - name: Build client
+      run: npm run build:client
+
+    # The release is everything the container needs at runtime and nothing it
+    # doesn't: built JS + the package manifests to install server prod deps.
+    # ui is a build-time dep only (bundled into client/dist above), so it
+    # stays out of the tarball. artipods/ and .env live in shared/ on the box.
+    - name: Package release
+      run: |
+        mkdir -p out
+        tar -czf "out/pulseclip-dev-${GITHUB_SHA::7}.tar.gz" \
+          package.json package-lock.json \
+          server/package.json server/dist \
+          client/package.json client/dist
+
+    # Rehearse exactly what the box will do: unpack into a clean dir, install
+    # server prod deps from the lockfile, boot, and hit the healthcheck.
+    - name: Smoke test the artifact
+      run: |
+        mkdir -p smoke && tar -xzf out/pulseclip-dev-*.tar.gz -C smoke
+        cd smoke
+        npm ci --omit=dev --workspace=server
+        mkdir -p server/artipods
+        (cd server && node dist/index.js &)
+        timeout 30 bash -c 'until curl -fsS localhost:3000/api/providers; do sleep 1; done'
+        echo "healthcheck OK"
+
+    - name: Upload release artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: pulseclip-dev-${{ github.sha }}
+        path: out/
+        retention-days: 14
+
+    # Delivery to the cluster container goes here once the box is reachable
+    # (self-hosted runner or SSH from Actions — pending infra answers).
