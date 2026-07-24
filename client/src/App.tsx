@@ -420,7 +420,6 @@ function App() {
           skipCache,
           options: {
             speakerLabels: false,
-            speech_models: ["universal-3-pro", "universal-2"],
           },
         }),
       });

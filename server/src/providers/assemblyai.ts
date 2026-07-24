@@ -31,7 +31,8 @@ export class AssemblyAIProvider implements TranscriptionProvider {
     const transcript = await this.client.transcripts.transcribe({
       audio: mediaUrl,
       speaker_labels: options?.speakerLabels ?? false,
-      speech_models: options?.speech_models ?? ["universal-3-pro", "universal-2"],
+      // universal-3-pro was deprecated by AssemblyAI (July 2026); universal-3-5-pro replaces it
+      speech_models: options?.speech_models ?? ["universal-3-5-pro", "universal-2"],
       disfluencies: true,      // Include filler words (um, uh, etc.)
       format_text: false,      // No text cleanup - raw precise output
     });
