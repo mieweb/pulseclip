@@ -15,6 +15,19 @@ jobs:
     - name: Init ui submodule
       run: git submodule update --init ui
 
+    # The ui build dominates the run (~6 of ~8 minutes) but only changes when
+    # the submodule pointer does — cache its dist keyed on that exact commit.
+    - name: Compute ui submodule SHA
+      id: uisha
+      run: echo "sha=$(git ls-tree HEAD ui | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache built ui library
+      id: ui-cache
+      uses: actions/cache@v4
+      with:
+        path: ui/dist
+        key: ui-dist-${{ steps.uisha.outputs.sha }}
+
     - name: Setup Node.js
       uses: actions/setup-node@v5
       with:
@@ -24,9 +37,11 @@ jobs:
     # Same rationale as ci.yml: corepack provides the pnpm version pinned in
     # ui/package.json's "packageManager" field.
     - name: Enable pnpm (for the ui submodule)
+      if: steps.ui-cache.outputs.cache-hit != 'true'
       run: corepack enable
 
     - name: Build @mieweb/ui submodule
+      if: steps.ui-cache.outputs.cache-hit != 'true'
       run: cd ui && pnpm install --frozen-lockfile && pnpm build
 
     - name: Install dependencies
