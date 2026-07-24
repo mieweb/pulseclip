@@ -69,5 +69,23 @@ jobs:
         path: out/
         retention-days: 14
 
-    # Delivery to the cluster container goes here once the box is reachable
-    # (self-hosted runner or SSH from Actions — pending infra answers).
+    # Ship the smoke-tested tarball to the dev container and install it via
+    # release.sh (symlink-flip + healthcheck + auto-rollback on the box).
+    - name: Deploy to dev container
+      env:
+        DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      run: |
+        mkdir -p ~/.ssh
+        printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        OPTS="-i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+        TB=$(ls out/pulseclip-dev-*.tar.gz)
+        scp $OPTS -P "$DEPLOY_PORT" "$TB" scripts/deploy/release.sh "$DEPLOY_USER@$DEPLOY_HOST:deploy/"
+        ssh $OPTS -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+          "APP_ROOT=\$HOME/pulseclip-app RESTART_CMD='sudo systemctl restart pulseclip-dev' bash ~/deploy/release.sh ~/deploy/$(basename "$TB")"
+
+    - name: Verify public URL
+      run: curl -fsS --max-time 20 https://pulseclip-dev2.os.mieweb.org/api/providers
