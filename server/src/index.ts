@@ -31,7 +31,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = Number(process.env.PORT) || 3000;
 
 // Initialize provider registry
 const providerRegistry = initializeProviders();
@@ -954,7 +954,7 @@ if (existsSync(clientDistPath)) {
   });
 }
 
-app.listen(port, () => {
+app.listen(port, '127.0.0.1', () => {
   console.log(`Available providers: ${providerRegistry.list().map((p) => p.displayName).join(', ')}`);
   console.log(`Server running on http://localhost:${port}`);
   if (existsSync(clientDistPath)) {
