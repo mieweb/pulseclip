@@ -9,12 +9,13 @@ import { Card, CardContent, CardMedia } from '@mieweb/ui/components/Card';
 import { Button } from '@mieweb/ui/components/Button';
 import { Alert } from '@mieweb/ui/components/Alert';
 import { Input } from '@mieweb/ui/components/Input';
+import { Checkbox } from '@mieweb/ui/components/Checkbox';
 import { Modal, ModalHeader, ModalTitle, ModalClose, ModalBody, ModalFooter } from '@mieweb/ui/components/Modal';
 import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
 import { AudioLines, Film, Zap, Scissors, Type } from 'lucide-react';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
-import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
+import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord, SpeedMarker, PlaybackSpeed } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
 import './App.scss';
 
@@ -24,6 +25,8 @@ type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
 interface SavedEditorState {
   editedWords: EditableWord[];
   undoStack: EditableWord[][];
+  speedMarkers?: SpeedMarker[];
+  defaultSpeed?: PlaybackSpeed;
   savedAt: string;
 }
 
@@ -112,6 +115,14 @@ function App() {
   const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportName, setExportName] = useState('');
+  const [exportCaptions, setExportCaptions] = useState(false);
+  // Refs mirror the live editor state so stable callbacks (speed saves, export)
+  // always read current values without re-creating on every edit
+  const latestEditedWordsRef = useRef<EditableWord[]>([]);
+  const latestSpeedState = useRef<{ speedMarkers: SpeedMarker[]; defaultSpeed: PlaybackSpeed }>({
+    speedMarkers: [],
+    defaultSpeed: 1,
+  });
   const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
@@ -256,6 +267,8 @@ function App() {
           setSavedEditorState({
             editedWords: data.editedWords,
             undoStack: data.undoStack || [],
+            speedMarkers: data.speedMarkers || [],
+            defaultSpeed: data.defaultSpeed ?? 1,
             savedAt: data.savedAt,
           });
         } else {
@@ -311,6 +324,39 @@ function App() {
       }
     };
   }, []);
+
+  const handleEditedWordsRender = useCallback((words: EditableWord[]) => {
+    latestEditedWordsRef.current = words;
+    setLatestEditedWords(words);
+  }, []);
+
+  // Persist speed changes (debounced). No undoStack in the body: the server
+  // keeps saved fields that are not sent, so this cannot clobber undo history.
+  const handleSpeedStateChange = useCallback((speedMarkers: SpeedMarker[], defaultSpeed: PlaybackSpeed) => {
+    latestSpeedState.current = { speedMarkers, defaultSpeed };
+    if (!artipodId || !apiKey || latestEditedWordsRef.current.length === 0) return;
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = setTimeout(() => {
+      fetch(`/api/artipod/${artipodId}/edits`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({
+          editedWords: latestEditedWordsRef.current,
+          speedMarkers,
+          defaultSpeed,
+          savedAt: new Date().toISOString(),
+        }),
+      }).catch((err) => {
+        console.error('Failed to save speed state:', err);
+      });
+    }, 1000);
+  }, [artipodId, apiKey]);
 
   // Load available providers on mount
   useEffect(() => {
@@ -751,7 +797,12 @@ function App() {
           'X-API-Key': apiKey,
         },
         // Send live editor state; with no edits yet, let the server fall back to edits.json
-        body: JSON.stringify(latestEditedWords.length > 0 ? { editedWords: latestEditedWords } : {}),
+        body: JSON.stringify({
+          ...(latestEditedWords.length > 0 ? { editedWords: latestEditedWords } : {}),
+          speedMarkers: latestSpeedState.current.speedMarkers,
+          defaultSpeed: latestSpeedState.current.defaultSpeed,
+          captions: exportCaptions,
+        }),
       });
 
       if (response.status === 401) {
@@ -841,6 +892,11 @@ function App() {
             placeholder="File name"
             onKeyDown={(e) => e.key === 'Enter' && handleExportConfirm()}
             autoFocus
+          />
+          <Checkbox
+            label="Burn captions into the video"
+            checked={exportCaptions}
+            onChange={(e) => setExportCaptions(e.target.checked)}
           />
         </div>
       </ModalBody>
@@ -1299,10 +1355,13 @@ function App() {
                 transcript={transcriptionResult.transcript}
                 initialEditedWords={savedEditorState?.editedWords}
                 initialUndoStack={savedEditorState?.undoStack}
+                initialSpeedMarkers={savedEditorState?.speedMarkers}
+                initialDefaultSpeed={savedEditorState?.defaultSpeed}
                 onEditorStateChange={saveEditorState}
                 onHasEditsChange={setHasEdits}
                 onCursorTimestampChange={setCursorTimestampMs}
-                onEditedWordsRender={setLatestEditedWords}
+                onEditedWordsRender={handleEditedWordsRender}
+                onSpeedStateChange={handleSpeedStateChange}
                 playerRef={playerRef}
               />
             </div>
