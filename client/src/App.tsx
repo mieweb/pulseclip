@@ -110,6 +110,8 @@ function App() {
   const [cursorTimestampMs, setCursorTimestampMs] = useState<number | null>(null);
   const [latestEditedWords, setLatestEditedWords] = useState<EditableWord[]>([]);
   const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportName, setExportName] = useState('');
   const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
@@ -735,7 +737,7 @@ function App() {
   };
 
   // Export: render the current edits server-side, then download the result
-  const handleExport = async () => {
+  const handleExport = async (downloadName: string) => {
     if (!artipodId || exportStatus === 'exporting') return;
     setExportStatus('exporting');
     setError(null);
@@ -771,9 +773,13 @@ function App() {
         const status = await statusRes.json().catch(() => ({}));
 
         if (statusRes.ok && status.status === 'completed') {
+          // The server file is always export.mp4/.m4a; the chosen name only
+          // affects what the browser saves the download as
+          const ext = (status.filename || 'export.mp4').match(/\.[^.]+$/)?.[0] || '.mp4';
+          const base = downloadName.replace(/\.(mp4|m4a)$/i, '').trim() || 'export';
           const link = document.createElement('a');
           link.href = status.downloadUrl;
-          link.download = status.filename || 'export.mp4';
+          link.download = `${base}${ext}`;
           document.body.appendChild(link);
           link.click();
           link.remove();
@@ -794,6 +800,17 @@ function App() {
     }
   };
 
+  const openExportModal = () => {
+    const base = mediaFilename.replace(/\.[^.]+$/, '') || 'export';
+    setExportName(`${base}-edited`);
+    setShowExportModal(true);
+  };
+
+  const handleExportConfirm = () => {
+    setShowExportModal(false);
+    handleExport(exportName);
+  };
+
   const handleApiKeySubmit = () => {
     const key = pendingApiKey.trim();
     if (key) {
@@ -805,6 +822,36 @@ function App() {
   };
 
   // Render API Key Modal
+  const renderExportModal = () => (
+    <Modal open={showExportModal} onOpenChange={(open) => !open && setShowExportModal(false)} size="sm">
+      <ModalHeader>
+        <ModalTitle>Export Video</ModalTitle>
+        <ModalClose />
+      </ModalHeader>
+      <ModalBody>
+        <div className="flex flex-col gap-3">
+          <p className="m-0 text-sm text-muted-foreground">
+            Renders your edits into a new file and downloads it.
+          </p>
+          <Input
+            label="File name"
+            value={exportName}
+            onChange={(e) => setExportName(e.target.value)}
+            placeholder="File name"
+            onKeyDown={(e) => e.key === 'Enter' && handleExportConfirm()}
+            autoFocus
+          />
+        </div>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={() => setShowExportModal(false)}>
+          Cancel
+        </Button>
+        <Button onClick={handleExportConfirm}>Export</Button>
+      </ModalFooter>
+    </Modal>
+  );
+
   const renderApiKeyModal = () => (
     <Modal open={showApiKeyModal} onOpenChange={(open) => !open && setShowApiKeyModal(false)} size="sm">
       <ModalHeader>
@@ -1014,6 +1061,7 @@ function App() {
     <div className="app app--split">
       {renderApiKeyModal()}
       {renderFeaturedModal()}
+      {renderExportModal()}
       {/* Compact toolbar */}
       <header className="app__toolbar">
         <div className="app__toolbar-left">
@@ -1131,18 +1179,18 @@ function App() {
                   </option>
                 ))}
               </select>
-              <button
-                className="app__transcribe-btn"
-                onClick={handleExport}
-                disabled={exportStatus === 'exporting'}
+              <Button
+                size="sm"
+                onClick={openExportModal}
+                isLoading={exportStatus === 'exporting'}
+                loadingText="Exporting…"
                 title="Render the edited video to a new file"
                 aria-label="Export edited video"
               >
-                {exportStatus === 'exporting' ? 'Exporting…' :
-                 exportStatus === 'success' ? 'Exported ✓' :
+                {exportStatus === 'success' ? 'Exported ✓' :
                  exportStatus === 'error' ? 'Export failed' :
                  'Export'}
-              </button>
+              </Button>
               <button
                 className={`app__icon-btn app__data-toggle ${viewMode === 'data' ? 'app__data-toggle--active' : ''}`}
                 onClick={() => setViewMode(viewMode === 'data' ? 'transcript' : 'data')}
