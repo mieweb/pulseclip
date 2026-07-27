@@ -109,6 +109,7 @@ function App() {
   const [editsLoaded, setEditsLoaded] = useState(false);
   const [cursorTimestampMs, setCursorTimestampMs] = useState<number | null>(null);
   const [latestEditedWords, setLatestEditedWords] = useState<EditableWord[]>([]);
+  const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
   const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
@@ -733,6 +734,66 @@ function App() {
     }
   };
 
+  // Export: render the current edits server-side, then download the result
+  const handleExport = async () => {
+    if (!artipodId || exportStatus === 'exporting') return;
+    setExportStatus('exporting');
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/artipod/${artipodId}/export`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        // Send live editor state; with no edits yet, let the server fall back to edits.json
+        body: JSON.stringify(latestEditedWords.length > 0 ? { editedWords: latestEditedWords } : {}),
+      });
+
+      if (response.status === 401) {
+        setExportStatus('idle');
+        setShowApiKeyModal(true);
+        return;
+      }
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `Export failed (${response.status})`);
+      }
+
+      const { jobId } = await response.json();
+
+      // Poll until the render completes
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const statusRes = await fetch(`/api/export/status/${jobId}`);
+        const status = await statusRes.json().catch(() => ({}));
+
+        if (statusRes.ok && status.status === 'completed') {
+          const link = document.createElement('a');
+          link.href = status.downloadUrl;
+          link.download = status.filename || 'export.mp4';
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setExportStatus('success');
+          setTimeout(() => setExportStatus('idle'), 3000);
+          return;
+        }
+
+        if (!statusRes.ok) {
+          throw new Error(status.message || status.error || 'Export failed');
+        }
+      }
+    } catch (err) {
+      console.error('Export failed:', err);
+      setError(err instanceof Error ? err.message : 'Export failed');
+      setExportStatus('error');
+      setTimeout(() => setExportStatus('idle'), 3000);
+    }
+  };
+
   const handleApiKeySubmit = () => {
     const key = pendingApiKey.trim();
     if (key) {
@@ -1070,6 +1131,18 @@ function App() {
                   </option>
                 ))}
               </select>
+              <button
+                className="app__transcribe-btn"
+                onClick={handleExport}
+                disabled={exportStatus === 'exporting'}
+                title="Render the edited video to a new file"
+                aria-label="Export edited video"
+              >
+                {exportStatus === 'exporting' ? 'Exporting…' :
+                 exportStatus === 'success' ? 'Exported ✓' :
+                 exportStatus === 'error' ? 'Export failed' :
+                 'Export'}
+              </button>
               <button
                 className={`app__icon-btn app__data-toggle ${viewMode === 'data' ? 'app__data-toggle--active' : ''}`}
                 onClick={() => setViewMode(viewMode === 'data' ? 'transcript' : 'data')}

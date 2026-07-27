@@ -10,6 +10,7 @@ import { initializeProviders } from './providers/registry.js';
 import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
 import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
+import { buildExportSegments, renderExport, EXPORT_FILENAMES } from './export.js';
 
 // Load environment variables
 dotenv.config();
@@ -25,6 +26,18 @@ interface TranscriptionJob {
 const transcriptionJobs = new Map<string, TranscriptionJob>();
 // File size threshold (in bytes) above which transcription runs async (100MB)
 const ASYNC_TRANSCRIPTION_THRESHOLD = 100 * 1024 * 1024;
+
+// --- Async export (render) job store ---
+interface ExportJob {
+  id: string;
+  status: 'processing' | 'completed' | 'error';
+  downloadUrl?: string;
+  filename?: string;
+  durationMs?: number;
+  error?: string;
+  createdAt: number;
+}
+const exportJobs = new Map<string, ExportJob>();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -368,7 +381,7 @@ function findMediaInArtipod(artipodPath: string): string | null {
   if (!existsSync(artipodPath)) return null;
   const files = readdirSync(artipodPath);
   // Find the first media file (exclude known asset files)
-  const assetFiles = ['thumbnail.png', 'thumbnail.jpg', 'transcript.json', 'beats.json', 'edits.json'];
+  const assetFiles = ['thumbnail.png', 'thumbnail.jpg', 'transcript.json', 'beats.json', 'edits.json', ...EXPORT_FILENAMES];
   const mediaFile = files.find(f => !assetFiles.includes(f) && !f.startsWith('.'));
   return mediaFile || null;
 }
@@ -618,8 +631,102 @@ app.delete('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
     unlinkSync(editsPath);
     console.log(`Deleted edits for artipod ${artipodId}`);
   }
-  
+
   res.json({ success: true });
+});
+
+// Export: render the edit list to a new media file with ffmpeg (protected).
+// Body may carry { editedWords } (the live editor state); falls back to the
+// saved edits.json. Always async — returns 202 + jobId for polling.
+app.post('/api/artipod/:artipodId/export', requireAuth, (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+
+  if (!existsSync(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+
+  const mediaFile = findMediaInArtipod(artipodPath);
+  if (!mediaFile) {
+    return res.status(404).json({ error: 'No media file found in artipod' });
+  }
+
+  let editedWords = req.body?.editedWords;
+  if (!editedWords) {
+    const editsPath = join(artipodPath, 'edits.json');
+    if (!existsSync(editsPath)) {
+      return res.status(400).json({ error: 'No edits provided and no saved edits found' });
+    }
+    try {
+      editedWords = JSON.parse(readFileSync(editsPath, 'utf-8')).editedWords;
+    } catch {
+      return res.status(500).json({ error: 'Failed to read saved edits' });
+    }
+  }
+
+  if (!Array.isArray(editedWords) || editedWords.length === 0) {
+    return res.status(400).json({ error: 'editedWords must be a non-empty array' });
+  }
+
+  const segments = buildExportSegments(editedWords);
+  if (segments.length === 0) {
+    return res.status(400).json({ error: 'Nothing to export: every word is deleted' });
+  }
+
+  const jobId = randomUUID();
+  exportJobs.set(jobId, { id: jobId, status: 'processing', createdAt: Date.now() });
+  console.log(`Export job ${jobId} started for artipod ${artipodId}: ${segments.length} segments`);
+
+  renderExport(join(artipodPath, mediaFile), artipodPath, segments)
+    .then(({ filename, durationMs }) => {
+      exportJobs.set(jobId, {
+        id: jobId,
+        status: 'completed',
+        downloadUrl: `/artipods/${artipodId}/${filename}`,
+        filename,
+        durationMs,
+        createdAt: Date.now(),
+      });
+      console.log(`Export job ${jobId} completed: ${filename} (${Math.round(durationMs / 1000)}s)`);
+    })
+    .catch((error) => {
+      exportJobs.set(jobId, {
+        id: jobId,
+        status: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        createdAt: Date.now(),
+      });
+      console.error(`Export job ${jobId} failed:`, error);
+    });
+
+  res.status(202).json({ jobId, status: 'processing', segmentCount: segments.length });
+});
+
+// Poll for async export job status
+app.get('/api/export/status/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = exportJobs.get(jobId);
+
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  if (job.status === 'completed') {
+    exportJobs.delete(jobId);
+    return res.json({
+      status: 'completed',
+      downloadUrl: job.downloadUrl,
+      filename: job.filename,
+      durationMs: job.durationMs,
+    });
+  }
+
+  if (job.status === 'error') {
+    exportJobs.delete(jobId);
+    return res.status(500).json({ error: 'Export failed', message: job.error });
+  }
+
+  res.json({ status: 'processing', jobId });
 });
 
 // Legacy route - redirect old filename format to artipod lookup
