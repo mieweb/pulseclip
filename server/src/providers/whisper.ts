@@ -11,6 +11,7 @@ import type {
   Transcript,
   TranscriptWord,
 } from '../types/transcription.js';
+import { detectSilences, applySilenceGaps } from '../silence.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -114,6 +115,16 @@ export class WhisperProvider implements TranscriptionProvider {
 
       const raw = JSON.parse(readFileSync(jsonPath, 'utf-8'));
       const normalized = this.normalize(raw, durationMs);
+
+      // whisper.cpp emits contiguous word timestamps (pauses get absorbed into
+      // word spans), so the editor would never see a silence. Re-open the real
+      // gaps using ffmpeg silencedetect on the WAV we already extracted.
+      try {
+        const silences = await detectSilences(wavPath, durationMs);
+        applySilenceGaps(normalized.words, silences);
+      } catch (error) {
+        console.warn('Silence detection failed; transcript keeps contiguous timestamps:', error);
+      }
 
       return { normalized, raw };
     } finally {
