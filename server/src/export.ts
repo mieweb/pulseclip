@@ -14,11 +14,13 @@ const ffprobePath = process.env.FFPROBE_PATH || 'ffprobe';
 const RENDER_TIMEOUT_MS = 10 * 60 * 1000;
 
 /** Filenames the export writes into an artipod folder — must stay excluded from media detection */
-export const EXPORT_FILENAMES = ['export.mp4', 'export.m4a'];
+export const EXPORT_FILENAMES = ['export.mp4', 'export.m4a', 'export.srt'];
 
 export interface ExportSegment {
   startMs: number;
   endMs: number;
+  /** Playback-rate multiplier baked into the render (1 = realtime) */
+  speed: number;
 }
 
 /** Minimal shape of an edited word as persisted in edits.json / sent by the client */
@@ -27,50 +29,185 @@ interface EditableWordLike {
   deleted?: boolean;
   inserted?: boolean;
   word: {
+    text?: string;
     startMs: number;
     endMs: number;
+    wordType?: string;
   };
 }
 
+/** Speed marker as persisted alongside the edit list (ui SpeedMarker shape) */
+export interface SpeedMarkerLike {
+  wordIndex: number;
+  speed: number;
+}
+
+/** A spoken word placed on the EXPORTED timeline (for captions) */
+export interface CaptionWord {
+  text: string;
+  startMs: number;
+  endMs: number;
+}
+
+export interface ExportPlan {
+  segments: ExportSegment[];
+  captionWords: CaptionWord[];
+  durationMs: number;
+}
+
+// atempo only accepts 0.5–2.0, which happens to be the editor's speed range;
+// clamp defensively so a bad marker can't produce an invalid filter
+const clampSpeed = (speed: number): number =>
+  Math.min(2, Math.max(0.5, Number.isFinite(speed) && speed > 0 ? speed : 1));
+
+/** Effective speed at an edited-word index — mirrors getSpeedAtIndex in @mieweb/ui */
+function speedAtIndex(
+  index: number,
+  markers: SpeedMarkerLike[],
+  defaultSpeed: number
+): number {
+  let best: SpeedMarkerLike | null = null;
+  for (const marker of markers) {
+    if (marker.wordIndex <= index && (!best || marker.wordIndex > best.wordIndex)) {
+      best = marker;
+    }
+  }
+  return clampSpeed(best ? best.speed : defaultSpeed);
+}
+
 /**
- * Builds the cut list (keep-segments) from an edited word list.
- * Mirrors buildPlaybackSegments in @mieweb/ui useTranscriptEdits.ts — keep the
- * two in sync so an export always matches play-as-edited: consecutive words in
+ * Builds the render plan from an edited word list: the cut list (keep-segments,
+ * split wherever the effective speed changes so each can carry one rate) and
+ * every spoken word mapped onto the exported timeline for captions.
+ *
+ * Segment merging mirrors buildPlaybackSegments in @mieweb/ui — keep the two
+ * in sync so an export always matches play-as-edited: consecutive words in
  * original order merge into one segment; inserted (pasted) words each get their
  * own segment since they may duplicate a range that plays elsewhere.
  */
-export function buildExportSegments(editedWords: EditableWordLike[]): ExportSegment[] {
+export function buildExportPlan(
+  editedWords: EditableWordLike[],
+  speedMarkers: SpeedMarkerLike[] = [],
+  defaultSpeed = 1
+): ExportPlan {
   const segments: ExportSegment[] = [];
+  const captionWords: CaptionWord[] = [];
   let currentSegment: ExportSegment | null = null;
   let lastOriginalIndex = -2; // -2 so the first word always starts a new segment
   let lastWasInserted = false;
+  // Exported-timeline ms already emitted by CLOSED segments
+  let outBaseMs = 0;
 
-  for (const ew of editedWords) {
+  const closeSegment = () => {
+    if (currentSegment) {
+      outBaseMs +=
+        (currentSegment.endMs - currentSegment.startMs) / currentSegment.speed;
+      segments.push(currentSegment);
+      currentSegment = null;
+    }
+  };
+
+  for (let i = 0; i < editedWords.length; i++) {
+    const ew = editedWords[i];
     if (ew.deleted) continue;
 
+    const speed = speedAtIndex(i, speedMarkers, defaultSpeed);
     const isConsecutive =
       !ew.inserted &&
       !lastWasInserted &&
-      ew.originalIndex === lastOriginalIndex + 1;
+      ew.originalIndex === lastOriginalIndex + 1 &&
+      currentSegment !== null &&
+      currentSegment.speed === speed;
 
     if (currentSegment && isConsecutive) {
       currentSegment.endMs = ew.word.endMs;
     } else {
-      if (currentSegment) {
-        segments.push(currentSegment);
-      }
-      currentSegment = { startMs: ew.word.startMs, endMs: ew.word.endMs };
+      closeSegment();
+      currentSegment = { startMs: ew.word.startMs, endMs: ew.word.endMs, speed };
+    }
+
+    // Spoken words (not silence pseudo-words) land on the exported timeline
+    const isSpoken = !ew.word.wordType || ew.word.wordType === 'word';
+    if (isSpoken && ew.word.text && currentSegment) {
+      captionWords.push({
+        text: ew.word.text,
+        startMs: outBaseMs + (ew.word.startMs - currentSegment.startMs) / speed,
+        endMs: outBaseMs + (ew.word.endMs - currentSegment.startMs) / speed,
+      });
     }
 
     lastOriginalIndex = ew.originalIndex;
     lastWasInserted = ew.inserted ?? false;
   }
 
-  if (currentSegment) {
-    segments.push(currentSegment);
-  }
+  closeSegment();
 
-  return segments.filter((s) => s.endMs > s.startMs && s.startMs >= 0);
+  const validSegments = segments.filter(
+    (s) => s.endMs > s.startMs && s.startMs >= 0
+  );
+  const durationMs = validSegments.reduce(
+    (sum, s) => sum + (s.endMs - s.startMs) / s.speed,
+    0
+  );
+  return { segments: validSegments, captionWords, durationMs };
+}
+
+const srtTimestamp = (ms: number): string => {
+  const clamped = Math.max(0, Math.round(ms));
+  const h = Math.floor(clamped / 3600000);
+  const m = Math.floor((clamped % 3600000) / 60000);
+  const s = Math.floor((clamped % 60000) / 1000);
+  const frac = clamped % 1000;
+  const pad = (n: number, w = 2) => String(n).padStart(w, '0');
+  return `${pad(h)}:${pad(m)}:${pad(s)},${pad(frac, 3)}`;
+};
+
+// Cue shaping roughly per broadcast conventions: ~2 lines of ~32 chars,
+// break on dead air, never linger past 5s
+const CUE_MAX_CHARS = 64;
+const CUE_MAX_GAP_MS = 800;
+const CUE_MAX_DURATION_MS = 5000;
+const CUE_MIN_DURATION_MS = 300;
+
+/** Groups exported-timeline words into an SRT document */
+export function buildSrt(captionWords: CaptionWord[]): string {
+  const cues: { startMs: number; endMs: number; text: string }[] = [];
+  let cue: { startMs: number; endMs: number; words: string[]; chars: number } | null = null;
+
+  const closeCue = () => {
+    if (cue) {
+      cues.push({
+        startMs: cue.startMs,
+        endMs: Math.max(cue.endMs, cue.startMs + CUE_MIN_DURATION_MS),
+        text: cue.words.join(' '),
+      });
+      cue = null;
+    }
+  };
+
+  for (const word of captionWords) {
+    const breaks =
+      cue !== null &&
+      (cue.chars + word.text.length + 1 > CUE_MAX_CHARS ||
+        word.startMs - cue.endMs > CUE_MAX_GAP_MS ||
+        word.endMs - cue.startMs > CUE_MAX_DURATION_MS);
+    if (breaks) closeCue();
+
+    if (!cue) {
+      cue = { startMs: word.startMs, endMs: word.endMs, words: [], chars: 0 };
+    }
+    cue.words.push(word.text);
+    cue.chars += word.text.length + 1;
+    cue.endMs = word.endMs;
+  }
+  closeCue();
+
+  return cues
+    .map(
+      (c, i) =>
+        `${i + 1}\n${srtTimestamp(c.startMs)} --> ${srtTimestamp(c.endMs)}\n${c.text}\n`
+    )
+    .join('\n');
 }
 
 async function probeStreams(mediaPath: string): Promise<{ hasVideo: boolean; hasAudio: boolean }> {
@@ -89,12 +226,38 @@ async function probeStreams(mediaPath: string): Promise<{ hasVideo: boolean; has
 
 const toSeconds = (ms: number): string => (ms / 1000).toFixed(3);
 
+// The subtitles filter needs an ffmpeg built with libass (present on the dev
+// box's Debian ffmpeg; absent from some Homebrew builds). Probe once so a
+// caption request on a host without it degrades to an unburned render
+// instead of failing the job.
+let subtitlesFilterAvailable: boolean | null = null;
+export async function canBurnSubtitles(): Promise<boolean> {
+  if (subtitlesFilterAvailable === null) {
+    try {
+      const { stdout } = await execFileAsync(ffmpegPath, ['-hide_banner', '-filters'], {
+        maxBuffer: 8 * 1024 * 1024,
+      });
+      subtitlesFilterAvailable = /\bsubtitles\b/.test(stdout);
+    } catch {
+      subtitlesFilterAvailable = false;
+    }
+  }
+  return subtitlesFilterAvailable;
+}
+
 /**
- * Builds the ffmpeg filter graph: per-segment trim/atrim reset to t=0, then a
- * single concat. Written to a script file since the graph grows with segment
- * count and would overflow the argv limit on heavily edited transcripts.
+ * Builds the ffmpeg filter graph: per-segment trim/atrim reset to t=0 with the
+ * segment's speed baked in (setpts for video, atempo for audio), then a single
+ * concat, then an optional subtitle burn. Written to a script file since the
+ * graph grows with segment count and would overflow the argv limit on heavily
+ * edited transcripts.
  */
-function buildFilterScript(segments: ExportSegment[], hasVideo: boolean, hasAudio: boolean): string {
+function buildFilterScript(
+  segments: ExportSegment[],
+  hasVideo: boolean,
+  hasAudio: boolean,
+  srtPath?: string | null
+): string {
   const chains: string[] = [];
   const concatInputs: string[] = [];
 
@@ -102,11 +265,18 @@ function buildFilterScript(segments: ExportSegment[], hasVideo: boolean, hasAudi
     const start = toSeconds(seg.startMs);
     const end = toSeconds(seg.endMs);
     if (hasVideo) {
-      chains.push(`[0:v]trim=start=${start}:end=${end},setpts=PTS-STARTPTS[v${i}]`);
+      const pts =
+        seg.speed === 1
+          ? 'setpts=PTS-STARTPTS'
+          : `setpts=(PTS-STARTPTS)/${seg.speed}`;
+      chains.push(`[0:v]trim=start=${start}:end=${end},${pts}[v${i}]`);
       concatInputs.push(`[v${i}]`);
     }
     if (hasAudio) {
-      chains.push(`[0:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS[a${i}]`);
+      const tempo = seg.speed === 1 ? '' : `,atempo=${seg.speed}`;
+      chains.push(
+        `[0:a]atrim=start=${start}:end=${end},asetpts=PTS-STARTPTS${tempo}[a${i}]`
+      );
       concatInputs.push(`[a${i}]`);
     }
   });
@@ -115,6 +285,12 @@ function buildFilterScript(segments: ExportSegment[], hasVideo: boolean, hasAudi
   chains.push(
     `${concatInputs.join('')}concat=n=${segments.length}:v=${hasVideo ? 1 : 0}:a=${hasAudio ? 1 : 0}${outLabels}`
   );
+
+  if (srtPath && hasVideo) {
+    // No quoting: artipod paths contain no filtergraph metacharacters, and the
+    // filter parser rejects quoted values inside a script file
+    chains.push(`[outv]subtitles=filename=${srtPath}[outvs]`);
+  }
 
   return chains.join(';\n');
 }
@@ -125,15 +301,19 @@ export interface ExportResult {
 }
 
 /**
- * Renders the edit list to a new media file inside the artipod folder.
- * Re-encodes (required for frame-accurate cuts); writes to a dotfile first so a
- * failed render never leaves a half-written export where the UI can find it.
+ * Renders the export plan to a new media file inside the artipod folder.
+ * Re-encodes (required for frame-accurate cuts and speed baking); writes to a
+ * dotfile first so a failed render never leaves a half-written export where
+ * the UI can find it. When srtPath is given (video only) the captions are
+ * burned in via the subtitles filter.
  */
 export async function renderExport(
   mediaPath: string,
   artipodPath: string,
-  segments: ExportSegment[]
+  plan: ExportPlan,
+  srtPath?: string | null
 ): Promise<ExportResult> {
+  const { segments } = plan;
   if (segments.length === 0) {
     throw new Error('Nothing to export: the edit list has no remaining words');
   }
@@ -143,15 +323,16 @@ export async function renderExport(
     throw new Error('Source file has no audio or video streams');
   }
 
+  const burnSrt = hasVideo ? srtPath : null;
   const filename = hasVideo ? 'export.mp4' : 'export.m4a';
   const scriptPath = join(tmpdir(), `pulseclip-export-${randomUUID()}.filter`);
   const tmpOutPath = join(artipodPath, `.export-tmp-${randomUUID()}${hasVideo ? '.mp4' : '.m4a'}`);
 
-  writeFileSync(scriptPath, buildFilterScript(segments, hasVideo, hasAudio));
+  writeFileSync(scriptPath, buildFilterScript(segments, hasVideo, hasAudio, burnSrt));
 
   const args = ['-y', '-i', mediaPath, '-filter_complex_script', scriptPath];
   if (hasVideo) {
-    args.push('-map', '[outv]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p');
+    args.push('-map', burnSrt ? '[outvs]' : '[outv]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p');
   }
   if (hasAudio) {
     args.push('-map', '[outa]', '-c:a', 'aac');
@@ -171,6 +352,5 @@ export async function renderExport(
     try { unlinkSync(scriptPath); } catch { /* may not exist */ }
   }
 
-  const durationMs = segments.reduce((sum, s) => sum + (s.endMs - s.startMs), 0);
-  return { filename, durationMs };
+  return { filename, durationMs: Math.round(plan.durationMs) };
 }

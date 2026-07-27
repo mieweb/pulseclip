@@ -10,7 +10,7 @@ import { initializeProviders } from './providers/registry.js';
 import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
 import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
-import { buildExportSegments, renderExport, EXPORT_FILENAMES } from './export.js';
+import { buildExportPlan, buildSrt, renderExport, canBurnSubtitles, EXPORT_FILENAMES } from './export.js';
 
 // Load environment variables
 dotenv.config();
@@ -34,6 +34,7 @@ interface ExportJob {
   downloadUrl?: string;
   filename?: string;
   durationMs?: number;
+  srtUrl?: string;
   error?: string;
   createdAt: number;
 }
@@ -583,32 +584,41 @@ app.get('/api/artipod/:artipodId/edits', (req, res) => {
   }
 });
 
-// Save editor state (protected)
+// Save editor state (protected). Fields not sent keep their saved values, so
+// a speed-only save cannot clobber the undo history and vice versa.
 app.put('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
   const { artipodId } = req.params;
-  const { editedWords, undoStack, savedAt } = req.body;
-  
+  const { editedWords, undoStack, speedMarkers, defaultSpeed, savedAt } = req.body;
+
   const artipodPath = join(__dirname, '../artipods', artipodId);
-  
+
   if (!existsSync(artipodPath)) {
     return res.status(404).json({ error: 'Artipod not found' });
   }
-  
+
   if (!editedWords || !Array.isArray(editedWords)) {
     return res.status(400).json({ error: 'editedWords array is required' });
   }
-  
+
   try {
     const editsPath = join(artipodPath, 'edits.json');
+    let existing: any = {};
+    if (existsSync(editsPath)) {
+      try {
+        existing = JSON.parse(readFileSync(editsPath, 'utf-8'));
+      } catch { /* corrupt file: overwrite */ }
+    }
     const editsData = {
       editedWords,
-      undoStack: undoStack || [],
+      undoStack: undoStack ?? existing.undoStack ?? [],
+      speedMarkers: speedMarkers ?? existing.speedMarkers ?? [],
+      defaultSpeed: defaultSpeed ?? existing.defaultSpeed ?? 1,
       savedAt: savedAt || new Date().toISOString(),
     };
-    
+
     writeFileSync(editsPath, JSON.stringify(editsData, null, 2));
-    console.log(`Saved edits for artipod ${artipodId}: ${editedWords.length} words, ${undoStack?.length || 0} undo states`);
-    
+    console.log(`Saved edits for artipod ${artipodId}: ${editedWords.length} words, ${editsData.undoStack.length} undo states, ${editsData.speedMarkers.length} speed markers`);
+
     res.json({ success: true, savedAt: editsData.savedAt });
   } catch (error) {
     console.error('Failed to save edits:', error);
@@ -638,7 +648,7 @@ app.delete('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
 // Export: render the edit list to a new media file with ffmpeg (protected).
 // Body may carry { editedWords } (the live editor state); falls back to the
 // saved edits.json. Always async — returns 202 + jobId for polling.
-app.post('/api/artipod/:artipodId/export', requireAuth, (req, res) => {
+app.post('/api/artipod/:artipodId/export', requireAuth, async (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
 
@@ -652,13 +662,18 @@ app.post('/api/artipod/:artipodId/export', requireAuth, (req, res) => {
   }
 
   let editedWords = req.body?.editedWords;
-  if (!editedWords) {
-    const editsPath = join(artipodPath, 'edits.json');
-    if (!existsSync(editsPath)) {
-      return res.status(400).json({ error: 'No edits provided and no saved edits found' });
-    }
+  let speedMarkers = req.body?.speedMarkers;
+  let defaultSpeed = req.body?.defaultSpeed;
+  const burnCaptions = req.body?.captions === true;
+
+  // Anything not sent falls back to the saved editor state
+  const editsPath = join(artipodPath, 'edits.json');
+  if ((!editedWords || !speedMarkers) && existsSync(editsPath)) {
     try {
-      editedWords = JSON.parse(readFileSync(editsPath, 'utf-8')).editedWords;
+      const saved = JSON.parse(readFileSync(editsPath, 'utf-8'));
+      editedWords = editedWords ?? saved.editedWords;
+      speedMarkers = speedMarkers ?? saved.speedMarkers;
+      defaultSpeed = defaultSpeed ?? saved.defaultSpeed;
     } catch {
       return res.status(500).json({ error: 'Failed to read saved edits' });
     }
@@ -668,16 +683,39 @@ app.post('/api/artipod/:artipodId/export', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'editedWords must be a non-empty array' });
   }
 
-  const segments = buildExportSegments(editedWords);
-  if (segments.length === 0) {
+  const plan = buildExportPlan(
+    editedWords,
+    Array.isArray(speedMarkers) ? speedMarkers : [],
+    typeof defaultSpeed === 'number' ? defaultSpeed : 1
+  );
+  if (plan.segments.length === 0) {
     return res.status(400).json({ error: 'Nothing to export: every word is deleted' });
+  }
+
+  // The SRT sidecar is written whenever there are caption words; it is only
+  // burned into the video when the client asks
+  let srtPath: string | null = null;
+  let srtUrl: string | undefined;
+  if (plan.captionWords.length > 0) {
+    srtPath = join(artipodPath, 'export.srt');
+    writeFileSync(srtPath, buildSrt(plan.captionWords));
+    srtUrl = `/artipods/${artipodId}/export.srt`;
+  }
+
+  let burn = burnCaptions;
+  if (burn && !(await canBurnSubtitles())) {
+    console.warn('Captions requested but this ffmpeg lacks the subtitles filter (libass); rendering without burn');
+    burn = false;
   }
 
   const jobId = randomUUID();
   exportJobs.set(jobId, { id: jobId, status: 'processing', createdAt: Date.now() });
-  console.log(`Export job ${jobId} started for artipod ${artipodId}: ${segments.length} segments`);
+  console.log(
+    `Export job ${jobId} started for artipod ${artipodId}: ${plan.segments.length} segments` +
+    `${burn ? ', captions burned' : ''}`
+  );
 
-  renderExport(join(artipodPath, mediaFile), artipodPath, segments)
+  renderExport(join(artipodPath, mediaFile), artipodPath, plan, burn ? srtPath : null)
     .then(({ filename, durationMs }) => {
       exportJobs.set(jobId, {
         id: jobId,
@@ -685,6 +723,7 @@ app.post('/api/artipod/:artipodId/export', requireAuth, (req, res) => {
         downloadUrl: `/artipods/${artipodId}/${filename}`,
         filename,
         durationMs,
+        srtUrl,
         createdAt: Date.now(),
       });
       console.log(`Export job ${jobId} completed: ${filename} (${Math.round(durationMs / 1000)}s)`);
@@ -699,7 +738,7 @@ app.post('/api/artipod/:artipodId/export', requireAuth, (req, res) => {
       console.error(`Export job ${jobId} failed:`, error);
     });
 
-  res.status(202).json({ jobId, status: 'processing', segmentCount: segments.length });
+  res.status(202).json({ jobId, status: 'processing', segmentCount: plan.segments.length });
 });
 
 // Poll for async export job status
@@ -718,6 +757,7 @@ app.get('/api/export/status/:jobId', (req, res) => {
       downloadUrl: job.downloadUrl,
       filename: job.filename,
       durationMs: job.durationMs,
+      srtUrl: job.srtUrl,
     });
   }
 
