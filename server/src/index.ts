@@ -7,8 +7,9 @@ import { dirname, join } from 'path';
 import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'fs';
 import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
-import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
+import { getCachedTranscription, getCachedTranscriptionForFile, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
+import { createShare, getSharedArtipod, removeSharesForArtipod } from './shares.js';
 import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
 
 // Load environment variables
@@ -30,27 +31,10 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = Number(process.env.PORT) || 3000;
 
 // Initialize provider registry
 const providerRegistry = initializeProviders();
-
-// Secret key for protected endpoints
-const secretKey = process.env.SECRET_KEY;
-
-// Auth middleware for protected endpoints
-const requireAuth: express.RequestHandler = (req, res, next) => {
-  if (!secretKey) {
-    // No secret key configured, allow all requests
-    return next();
-  }
-
-  const providedKey = req.headers['x-api-key'] as string;
-  if (!providedKey || providedKey !== secretKey) {
-    return res.status(401).json({ error: 'Unauthorized', message: 'Valid API key required' });
-  }
-  next();
-};
 
 // Configure multer for file uploads into artipod folders
 const storage = multer.diskStorage({
@@ -156,9 +140,9 @@ app.get('/api/pulsecam/deeplink', (req, res) => {
   });
 });
 
-// Upload pulse (protected) - creates an artipod folder with UUID
+// Upload pulse - creates an artipod folder with UUID
 // Includes duplicate detection based on file checksum
-app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
+app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
@@ -211,7 +195,7 @@ app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
   });
 });
 
-// Transcribe with selected provider (auth required only for non-cached requests)
+// Transcribe with selected provider
 app.post('/api/transcribe', async (req, res) => {
   try {
     const { mediaUrl, providerId, options, skipCache } = req.body;
@@ -256,14 +240,6 @@ app.post('/api/transcribe', async (req, res) => {
       }
     } else {
       console.log(`Skipping cache for ${filename} (re-transcribe requested)`);
-    }
-
-    // Auth required for actual transcription (uses paid API)
-    if (secretKey) {
-      const providedKey = req.headers['x-api-key'] as string;
-      if (!providedKey || providedKey !== secretKey) {
-        return res.status(401).json({ error: 'Unauthorized', message: 'Valid API key required for transcription' });
-      }
     }
 
     // Check file size to determine sync vs async transcription
@@ -379,6 +355,35 @@ interface ArtipodMetadata {
   thumbnailUrl: string | null;
   durationSeconds: number | null;
   mediaUrl: string | null;
+}
+
+interface SharedMedia {
+  artipodId: string;
+  mediaFile: string;
+  mediaPath: string;
+}
+
+function getSharedMedia(token: string): SharedMedia | null {
+  if (!/^[a-f0-9]{32}$/i.test(token)) {
+    return null;
+  }
+
+  const share = getSharedArtipod(token);
+  if (!share) {
+    return null;
+  }
+
+  const artipodPath = join(__dirname, '../artipods', share.artipodId);
+  const mediaFile = findMediaInArtipod(artipodPath);
+  if (!mediaFile) {
+    return null;
+  }
+
+  return {
+    artipodId: share.artipodId,
+    mediaFile,
+    mediaPath: join(artipodPath, mediaFile),
+  };
 }
 
 function getArtipodMetadata(artipodId: string, baseUrl: string): ArtipodMetadata | null {
@@ -543,6 +548,78 @@ app.get('/api/artipod/:artipodId', (req, res) => {
   });
 });
 
+// Create a public, token-gated link for an existing artipod.
+app.post('/api/artipod/:artipodId/share', (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+
+  if (!existsSync(artipodPath) || !findMediaInArtipod(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+
+  const share = createShare(artipodId);
+  res.status(201).json({
+    success: true,
+    token: share.token,
+    url: `https://teamsfetch.mieweb.com/share/${share.token}`,
+  });
+});
+
+// Return share metadata only when the token is active.
+app.get('/share/:token/data', async (req, res) => {
+  const { token } = req.params;
+  const sharedMedia = getSharedMedia(token);
+  if (!sharedMedia) {
+    return res.status(404).json({ error: 'Shared recording not found' });
+  }
+
+  const cachedTranscription = await getCachedTranscriptionForFile(sharedMedia.mediaPath);
+  const editsPath = join(dirname(sharedMedia.mediaPath), 'edits.json');
+  let savedEdits: { editedWords?: unknown; undoStack?: unknown } = {};
+
+  if (existsSync(editsPath)) {
+    try {
+      savedEdits = JSON.parse(readFileSync(editsPath, 'utf-8'));
+    } catch (error) {
+      console.error('Failed to read shared editor state:', error);
+    }
+  }
+
+  res.set({
+    'Cache-Control': 'no-store, private',
+    'Referrer-Policy': 'no-referrer',
+    'X-Robots-Tag': 'noindex, nofollow, noarchive',
+  });
+  res.json({
+    success: true,
+    filename: sharedMedia.mediaFile,
+    url: `/share/${token}/media`,
+    transcript: cachedTranscription?.normalized ?? null,
+    initialEditedWords: Array.isArray(savedEdits.editedWords) ? savedEdits.editedWords : undefined,
+    initialUndoStack: Array.isArray(savedEdits.undoStack) ? savedEdits.undoStack : undefined,
+  });
+});
+
+// Stream media only when the token is active, preserving byte-range requests for seeking.
+app.get('/share/:token/media', (req, res, next) => {
+  const { token } = req.params;
+  const sharedMedia = getSharedMedia(token);
+  if (!sharedMedia) {
+    return res.status(404).json({ error: 'Shared recording not found' });
+  }
+
+  res.set({
+    'Cache-Control': 'no-store, private',
+    'Referrer-Policy': 'no-referrer',
+    'X-Robots-Tag': 'noindex, nofollow, noarchive',
+  });
+  res.sendFile(sharedMedia.mediaPath, (error) => {
+    if (error) {
+      next(error);
+    }
+  });
+});
+
 // Get editor state (edits and undo history) for an artipod
 app.get('/api/artipod/:artipodId/edits', (req, res) => {
   const { artipodId } = req.params;
@@ -569,8 +646,8 @@ app.get('/api/artipod/:artipodId/edits', (req, res) => {
   }
 });
 
-// Save editor state (protected)
-app.put('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
+// Save editor state
+app.put('/api/artipod/:artipodId/edits', (req, res) => {
   const { artipodId } = req.params;
   const { editedWords, undoStack, savedAt } = req.body;
   
@@ -602,8 +679,8 @@ app.put('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
   }
 });
 
-// Delete editor state (protected)
-app.delete('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
+// Delete editor state
+app.delete('/api/artipod/:artipodId/edits', (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
   
@@ -649,8 +726,8 @@ app.get('/api/file/:filename', (req, res) => {
   });
 });
 
-// Delete artipod (protected)
-app.delete('/api/artipod/:artipodId', requireAuth, async (req, res) => {
+// Delete artipod
+app.delete('/api/artipod/:artipodId', async (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
   
@@ -671,17 +748,19 @@ app.delete('/api/artipod/:artipodId', requireAuth, async (req, res) => {
     
     // Remove featured entry if exists
     const featuredRemoved = removeFeatured(artipodId);
+    const sharesRemoved = removeSharesForArtipod(artipodId);
     
     // Delete the entire artipod folder
     rmSync(artipodPath, { recursive: true, force: true });
     
-    console.log(`Deleted artipod: ${artipodId} (cache entries: ${cacheRemoved}, was featured: ${featuredRemoved})`);
+    console.log(`Deleted artipod: ${artipodId} (cache entries: ${cacheRemoved}, was featured: ${featuredRemoved}, shares removed: ${sharesRemoved})`);
     
     res.json({
       success: true,
       message: 'Artipod deleted',
       cacheEntriesRemoved: cacheRemoved,
       featuredRemoved,
+      sharesRemoved,
     });
   } catch (error) {
     console.error('Artipod deletion error:', error);
@@ -693,7 +772,7 @@ app.delete('/api/artipod/:artipodId', requireAuth, async (req, res) => {
 });
 
 // Legacy delete route
-app.delete('/api/file/:filename', requireAuth, async (req, res) => {
+app.delete('/api/file/:filename', async (req, res) => {
   const { filename } = req.params;
   // Check if it's a UUID (artipodId)
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -761,8 +840,8 @@ app.get('/api/featured/:filename', (req, res) => {
   res.json({ isFeatured: featured });
 });
 
-// Upload thumbnail (protected) - saves thumbnail.png inside artipod folder
-app.post('/api/thumbnail', requireAuth, (req, res) => {
+// Upload thumbnail - saves thumbnail.png inside artipod folder
+app.post('/api/thumbnail', (req, res) => {
   const { imageData, artipodId } = req.body;
   
   if (!imageData || !artipodId) {
@@ -806,8 +885,8 @@ app.post('/api/thumbnail', requireAuth, (req, res) => {
   }
 });
 
-// Add or update a featured pulse (protected) - now uses artipodId
-app.post('/api/featured', requireAuth, (req, res) => {
+// Add or update a featured pulse - now uses artipodId
+app.post('/api/featured', (req, res) => {
   const { artipodId, title, thumbnail } = req.body;
   
   if (!artipodId) {
@@ -824,8 +903,8 @@ app.post('/api/featured', requireAuth, (req, res) => {
   res.json({ success: true, pulse });
 });
 
-// Remove a featured pulse (protected)
-app.delete('/api/featured/:filename', requireAuth, (req, res) => {
+// Remove a featured pulse
+app.delete('/api/featured/:filename', (req, res) => {
   const { filename } = req.params;
   const removed = removeFeatured(filename);
   
@@ -875,7 +954,7 @@ if (existsSync(clientDistPath)) {
   });
 }
 
-app.listen(port, () => {
+app.listen(port, '127.0.0.1', () => {
   console.log(`Available providers: ${providerRegistry.list().map((p) => p.displayName).join(', ')}`);
   console.log(`Server running on http://localhost:${port}`);
   if (existsSync(clientDistPath)) {

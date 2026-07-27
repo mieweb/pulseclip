@@ -414,6 +414,20 @@
   }
 }
 
+.app__share-btn {
+  padding: 6px 10px;
+  border: 1px solid var(--mieweb-border, #e5e7eb);
+  border-radius: 4px;
+  background: var(--mieweb-card, #fff);
+  color: var(--mieweb-foreground, #171717);
+  font-size: 13px;
+  cursor: pointer;
+
+  &:hover {
+    background: var(--mieweb-muted, #f5f5f5);
+  }
+}
+
 .app__menu-btn {
   background: transparent;
   border: none;
@@ -936,5 +950,19 @@
       border-radius: 6px;
       border: 1px solid var(--mieweb-border, #2a2a4a);
     }
+  }
+}
+
+.share-modal {
+  &__link {
+    display: block;
+    overflow-wrap: anywhere;
+    color: var(--mieweb-primary-500, #2196F3);
+    font-size: 14px;
+    line-height: 1.5;
+  }
+
+  &__error {
+    color: var(--mieweb-destructive, #c62828) !important;
   }
 }

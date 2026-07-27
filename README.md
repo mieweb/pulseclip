@@ -117,6 +117,145 @@ This will start:
 4. Click "Transcribe" and wait for processing
 5. Click any word in the transcript to seek to that timestamp
 
+## Production Authentication and Sharing
+
+Production traffic reaches Pulseclip through a public load balancer and the
+origin Nginx instance. The Express process is intentionally bound to
+`127.0.0.1:3001`; port `3001` must not be reachable from the network. This makes
+origin Nginx the required authorization boundary for every application request.
+
+```mermaid
+flowchart LR
+  Browser[Browser] --> LB[Public Nginx load balancer]
+  LB --> Origin[Origin Nginx]
+  Origin --> StandardOAuth[oauth2-proxy: 127.0.0.1:4180]
+  Origin --> ShareOAuth[Share oauth2-proxy: 127.0.0.1:4181]
+  Origin --> App[Pulseclip: 127.0.0.1:3001]
+  ShareOAuth --> ShareToken[Hashed share token]
+  ShareToken --> App
+
+  classDef proxy fill:#e1f5ff,stroke:#01579b
+  classDef auth fill:#fff3e0,stroke:#e65100
+  classDef app fill:#e8f5e9,stroke:#1b5e20
+
+  class LB,Origin proxy
+  class StandardOAuth,ShareOAuth,ShareToken auth
+  class App app
+```
+
+### Route Policy
+
+| Route | Authentication policy | Destination |
+| --- | --- | --- |
+| `/oauth2/` | Public OAuth callback/sign-in flow | Standard oauth2-proxy on `4180` |
+| `/oauth2-share/` | Public OAuth callback/sign-in flow | Share oauth2-proxy on `4181` |
+| `/share/:token/...` | Share oauth2-proxy, then valid share token | Only the media and metadata mapped to that token |
+| `/assets/`, `/login` | Public | Pulseclip application |
+| `/`, `/api/`, `/artipod/`, `/artipods/` | Standard oauth2-proxy | Pulseclip application |
+
+The standard oauth2-proxy permits only `mieweb.com` accounts. The share
+oauth2-proxy permits any authenticated Google account, but it is only used for
+`/share/` routes. The two services must retain their separate secure cookie
+names: `__Host-teamsfetch` for standard access and
+`__Host-teamsfetch-share` for shared content.
+
+Share links are capability URLs, not general application access. A new share
+receives a cryptographically random token; only its SHA-256 hash is persisted.
+The server resolves `/share/:token/data` and `/share/:token/media` through that
+registry before returning metadata or streaming a file. An unknown or revoked
+token returns `404`. Share responses must remain `no-store`, private, and
+unindexed.
+
+### Origin Nginx Requirements
+
+The origin virtual host proxies the application to `127.0.0.1:3001`, exposes
+both local oauth2-proxy services only through their route prefixes, and applies
+the route policy above with `auth_request`. Its server name must accept both the
+origin hostname and `teamsfetch.mieweb.com` so the public host survives the LB
+hop.
+
+The OAuth configurations use these public callbacks:
+
+```text
+https://teamsfetch.mieweb.com/oauth2/callback
+https://teamsfetch.mieweb.com/oauth2-share/callback
+```
+
+Both configurations require `reverse_proxy = true`, `cookie_secure = true`,
+`set_xauthrequest = true`, and `whitelist_domains = ["teamsfetch.mieweb.com"]`.
+Do not expose oauth2-proxy listeners `4180` or `4181` outside the host.
+
+### Load Balancer Requirements
+
+The LB terminates public TLS and forwards every route to the origin. It must not
+run oauth2-proxy or use `auth_request`; those checks now belong exclusively to
+origin Nginx. Do not cache authenticated application or share responses at the
+LB.
+
+Most importantly, the LB must preserve the public host while using the internal
+origin name for TLS SNI:
+
+```nginx
+upstream teamsfetch_origin {
+  server mie-phxdc-teamsfetch.med-web.com:443;
+  keepalive 32;
+}
+
+location / {
+  proxy_pass https://teamsfetch_origin;
+  proxy_http_version 1.1;
+
+  proxy_set_header Host $host;
+  proxy_set_header X-Real-IP $remote_addr;
+  proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+  proxy_set_header X-Forwarded-Proto $scheme;
+  proxy_set_header X-Forwarded-Port $server_port;
+  proxy_set_header X-Forwarded-Host $host;
+  proxy_set_header Upgrade $http_upgrade;
+  proxy_set_header Connection $connection_upgrade;
+
+  proxy_ssl_server_name on;
+  proxy_ssl_name mie-phxdc-teamsfetch.med-web.com;
+}
+```
+
+The origin currently uses a locally generated TLS certificate. Until it is
+replaced by a certificate trusted by the LB, the LB requires
+`proxy_ssl_verify off`. Re-enable certificate verification as part of replacing
+that origin certificate.
+
+### Deployment Checks
+
+Build the backend before restarting its process manager:
+
+```bash
+cd server
+npm run build
+```
+
+The process manager must run `node dist/index.js` and keep it bound to loopback.
+After deployment, validate the boundary from the origin host:
+
+```bash
+ss -ltn '( sport = :3001 )'
+# Expected: 127.0.0.1:3001, never 0.0.0.0:3001 or [::]:3001.
+
+curl --noproxy '*' http://127.0.0.1:3001/api/providers
+# Expected: 200.
+
+curl --noproxy '*' http://<origin-private-ip>:3001/api/providers
+# Expected: connection refused.
+```
+
+With an unauthenticated browser session, requests through the public hostname
+must redirect as follows:
+
+```text
+/api/              -> /login
+/artipod/<id>      -> /login
+/share/<token>     -> /oauth2-share/sign_in
+```
+
 ## API Endpoints
 
 ### GET /api/providers
