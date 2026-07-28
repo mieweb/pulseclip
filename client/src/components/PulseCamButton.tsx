@@ -3,7 +3,46 @@ import { useState, useEffect } from 'react';
 import { Card } from '@mieweb/ui/components/Card';
 import { Button } from '@mieweb/ui/components/Button';
 import { Modal, ModalHeader, ModalTitle, ModalClose, ModalBody } from '@mieweb/ui/components/Modal';
-import { Smartphone } from 'lucide-react';
+
+/** Store pages for the Pulse app — static, shown before any pairing fetch */
+const STORE_LINKS = {
+  ios: 'https://apps.apple.com/us/app/pulse-cam/id6748621024',
+  android: 'https://play.google.com/store/apps/details?id=com.mieweb.pulse',
+};
+
+/** App Store / Google Play badge pair (official badge art) */
+function StoreBadges({ appleHeight, googleHeight }: { appleHeight: number; googleHeight: number }) {
+  return (
+    <div className="flex items-center justify-center gap-3">
+      <a
+        href={STORE_LINKS.ios}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Download on the App Store"
+      >
+        <img
+          src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83"
+          alt="Download on the App Store"
+          height={appleHeight}
+          style={{ height: appleHeight }}
+        />
+      </a>
+      <a
+        href={STORE_LINKS.android}
+        target="_blank"
+        rel="noopener noreferrer"
+        aria-label="Get it on Google Play"
+      >
+        <img
+          src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png"
+          alt="Get it on Google Play"
+          height={googleHeight}
+          style={{ height: googleHeight }}
+        />
+      </a>
+    </div>
+  );
+}
 
 interface PulseCamDeeplinkResponse {
   deeplink: string;
@@ -73,9 +112,12 @@ export const PulseCamButton: FC<PulseCamButtonProps> = ({ onError }) => {
     <>
       <Card padding="lg" className="h-full">
         <div className="flex min-h-52 flex-col items-center justify-center gap-3 text-center">
-          <span className="flex h-12 w-12 items-center justify-center rounded-full bg-primary-100 dark:bg-primary-900">
-            <Smartphone className="h-6 w-6 text-primary-800 dark:text-primary-300" aria-hidden="true" />
-          </span>
+          <img
+            src="/pulse-icon.png"
+            alt=""
+            aria-hidden="true"
+            className="h-12 w-12 rounded-xl shadow-sm"
+          />
           <p className="m-0 font-medium text-foreground">Record with your phone</p>
           <Button
             onClick={fetchDeeplink}
@@ -89,12 +131,18 @@ export const PulseCamButton: FC<PulseCamButtonProps> = ({ onError }) => {
           <p className="m-0 text-xs text-muted-foreground">
             Scan a QR code to connect &mdash; iOS &amp; Android
           </p>
+          <StoreBadges appleHeight={32} googleHeight={48} />
         </div>
       </Card>
 
       <Modal open={showModal && !!deeplinkData} onOpenChange={(open) => !open && setShowModal(false)} size="sm">
         <ModalHeader>
-          <ModalTitle>Record with PulseCam</ModalTitle>
+          <ModalTitle>
+            <span className="flex items-center gap-2">
+              <img src="/pulse-icon.png" alt="" aria-hidden="true" className="h-6 w-6 rounded-md" />
+              Record with PulseCam
+            </span>
+          </ModalTitle>
           <ModalClose />
         </ModalHeader>
         <ModalBody>
@@ -114,32 +162,7 @@ export const PulseCamButton: FC<PulseCamButtonProps> = ({ onError }) => {
             )}
             <div className="flex flex-col items-center gap-2">
               <p className="m-0 text-xs text-muted-foreground">Don&apos;t have PulseCam?</p>
-              <div className="flex items-center justify-center gap-3">
-                <a
-                  href={deeplinkData?.appStoreLinks.ios}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Download on the App Store"
-                >
-                  <img
-                    src="https://tools.applemediaservices.com/api/badges/download-on-the-app-store/black/en-us?size=250x83"
-                    alt="Download on the App Store"
-                    height={40}
-                  />
-                </a>
-                <a
-                  href={deeplinkData?.appStoreLinks.android}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  aria-label="Get it on Google Play"
-                >
-                  <img
-                    src="https://play.google.com/intl/en_us/badges/static/images/badges/en_badge_web_generic.png"
-                    alt="Get it on Google Play"
-                    height={60}
-                  />
-                </a>
-              </div>
+              <StoreBadges appleHeight={40} googleHeight={60} />
             </div>
           </div>
         </ModalBody>

@@ -12,7 +12,7 @@ import { Input } from '@mieweb/ui/components/Input';
 import { Checkbox } from '@mieweb/ui/components/Checkbox';
 import { Modal, ModalHeader, ModalTitle, ModalClose, ModalBody, ModalFooter } from '@mieweb/ui/components/Modal';
 import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
-import { AudioLines, Film, Zap, Scissors, Type, ChevronLeft, ChevronRight } from 'lucide-react';
+import { AudioLines, Film, Zap, Scissors, Type } from 'lucide-react';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
 import { rasterizeLowerThird } from './lib/rasterize';
@@ -48,40 +48,13 @@ const FEATURES = [
 ] as const;
 
 /**
- * Two-row horizontal card carousel: scrollbar hidden, side arrows page by
- * ~80% of the visible width. Cards flow column-first so the rows fill evenly.
+ * Two-row horizontal card track: scrollbar hidden, cards flow column-first
+ * so the rows fill evenly; trackpad/touch scrolling moves it sideways.
  */
 function PulseCarousel({ children }: { children: React.ReactNode }) {
-  const trackRef = useRef<HTMLDivElement>(null);
-  const page = (dir: 1 | -1) => {
-    const track = trackRef.current;
-    if (!track) return;
-    track.scrollBy({ left: dir * track.clientWidth * 0.8, behavior: 'smooth' });
-  };
   return (
-    <div className="relative w-full">
-      <button
-        type="button"
-        aria-label="Scroll left"
-        onClick={() => page(-1)}
-        className="absolute -left-3 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-md transition-colors hover:bg-muted"
-      >
-        <ChevronLeft className="h-5 w-5" aria-hidden="true" />
-      </button>
-      <div
-        ref={trackRef}
-        className="w-full overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
-      >
-        <div className="grid grid-flow-col grid-rows-2 gap-4 pb-1">{children}</div>
-      </div>
-      <button
-        type="button"
-        aria-label="Scroll right"
-        onClick={() => page(1)}
-        className="absolute -right-3 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-md transition-colors hover:bg-muted"
-      >
-        <ChevronRight className="h-5 w-5" aria-hidden="true" />
-      </button>
+    <div className="w-full overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+      <div className="grid grid-flow-col grid-rows-2 gap-4 pb-1">{children}</div>
     </div>
   );
 }
@@ -1241,7 +1214,7 @@ function App() {
           </nav>
         </header>
 
-        <main className="mx-auto w-full px-6 py-10 xl:px-12">
+        <main className="mx-auto w-full max-w-5xl px-6 py-10 xl:max-w-6xl 2xl:max-w-7xl">
           <div className="flex flex-col gap-12">
             {/* Featured pulses - prominent, with the rest of the library behind Show all */}
             {(featuredPulses.length > 0 || allPulses.length > 0) && (
