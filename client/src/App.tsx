@@ -5,7 +5,7 @@ import { PulseCamButton } from './components/PulseCamButton';
 import { MediaPlayer, type MediaPlayerRef } from '@mieweb/ui/components/MediaPlayer';
 import { MediaEditor } from '@mieweb/ui/components/MediaEditor';
 import { ThemeToggle } from '@mieweb/ui/components/ThemeProvider';
-import { Card, CardContent, CardMedia } from '@mieweb/ui/components/Card';
+import { Card, CardContent } from '@mieweb/ui/components/Card';
 import { Button } from '@mieweb/ui/components/Button';
 import { Alert } from '@mieweb/ui/components/Alert';
 import { Input } from '@mieweb/ui/components/Input';
@@ -54,7 +54,7 @@ function FeaturedPulseCard({ pulse, onOpen }: { pulse: FeaturedPulse; onOpen: ()
   return (
     <a
       href={`/artipod/${pulse.artipodId}`}
-      className="block w-40 shrink-0 no-underline"
+      className="block w-56 shrink-0 no-underline"
       onClick={(e) => {
         e.preventDefault();
         onOpen();
@@ -62,15 +62,25 @@ function FeaturedPulseCard({ pulse, onOpen }: { pulse: FeaturedPulse; onOpen: ()
     >
       <Card interactive padding="none" className="overflow-hidden">
         {showThumb ? (
-          <CardMedia
-            src={pulse.thumbnail}
-            alt=""
-            aspectRatio="auto"
-            className="aspect-[2/3]"
-            onError={() => setThumbFailed(true)}
-          />
+          // Whole thumbnail always visible regardless of orientation:
+          // landscape fills the 16:9 frame; portrait sits full-height and
+          // centered over a blurred cover copy of itself filling the sides
+          <div className="relative aspect-video overflow-hidden bg-muted">
+            <img
+              src={pulse.thumbnail}
+              alt=""
+              aria-hidden="true"
+              className="absolute inset-0 h-full w-full scale-110 object-cover opacity-60 blur-md"
+            />
+            <img
+              src={pulse.thumbnail}
+              alt=""
+              className="relative h-full w-full object-contain"
+              onError={() => setThumbFailed(true)}
+            />
+          </div>
         ) : (
-          <div className="flex aspect-[2/3] items-center justify-center bg-muted">
+          <div className="flex aspect-video items-center justify-center bg-muted">
             <Film className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
           </div>
         )}
