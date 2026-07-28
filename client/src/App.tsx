@@ -6,14 +6,13 @@ import { MediaPlayer, type MediaPlayerRef } from '@mieweb/ui/components/MediaPla
 import { MediaEditor } from '@mieweb/ui/components/MediaEditor';
 import { ThemeToggle } from '@mieweb/ui/components/ThemeProvider';
 import { Card, CardContent } from '@mieweb/ui/components/Card';
-import { ScrollArea } from '@mieweb/ui/components/ScrollArea';
 import { Button } from '@mieweb/ui/components/Button';
 import { Alert } from '@mieweb/ui/components/Alert';
 import { Input } from '@mieweb/ui/components/Input';
 import { Checkbox } from '@mieweb/ui/components/Checkbox';
 import { Modal, ModalHeader, ModalTitle, ModalClose, ModalBody, ModalFooter } from '@mieweb/ui/components/Modal';
 import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
-import { AudioLines, Film, Zap, Scissors, Type } from 'lucide-react';
+import { AudioLines, Film, Zap, Scissors, Type, ChevronLeft, ChevronRight } from 'lucide-react';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
 import { rasterizeLowerThird } from './lib/rasterize';
@@ -47,6 +46,45 @@ const FEATURES = [
   { Icon: Scissors, title: 'Word-Level Editing', desc: 'Delete fillers and dead air with a single click' },
   { Icon: Type, title: 'Edit Like Text', desc: 'Cut and paste video as simply as a text editor' },
 ] as const;
+
+/**
+ * Two-row horizontal card carousel: scrollbar hidden, side arrows page by
+ * ~80% of the visible width. Cards flow column-first so the rows fill evenly.
+ */
+function PulseCarousel({ children }: { children: React.ReactNode }) {
+  const trackRef = useRef<HTMLDivElement>(null);
+  const page = (dir: 1 | -1) => {
+    const track = trackRef.current;
+    if (!track) return;
+    track.scrollBy({ left: dir * track.clientWidth * 0.8, behavior: 'smooth' });
+  };
+  return (
+    <div className="relative w-full">
+      <button
+        type="button"
+        aria-label="Scroll left"
+        onClick={() => page(-1)}
+        className="absolute -left-3 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-md transition-colors hover:bg-muted"
+      >
+        <ChevronLeft className="h-5 w-5" aria-hidden="true" />
+      </button>
+      <div
+        ref={trackRef}
+        className="w-full overflow-x-auto [-ms-overflow-style:none] [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+      >
+        <div className="grid grid-flow-col grid-rows-2 gap-4 pb-1">{children}</div>
+      </div>
+      <button
+        type="button"
+        aria-label="Scroll right"
+        onClick={() => page(1)}
+        className="absolute -right-3 top-1/2 z-10 flex h-9 w-9 -translate-y-1/2 cursor-pointer items-center justify-center rounded-full border border-border bg-background/90 text-foreground shadow-md transition-colors hover:bg-muted"
+      >
+        <ChevronRight className="h-5 w-5" aria-hidden="true" />
+      </button>
+    </div>
+  );
+}
 
 /** Featured pulse card with graceful fallback when the thumbnail is missing or unreachable */
 function FeaturedPulseCard({ pulse, onOpen }: { pulse: FeaturedPulse; onOpen: () => void }) {
@@ -1250,9 +1288,7 @@ function App() {
                     <div className="mt-4 flex flex-col items-center gap-4">
                       {showAllPulses &&
                         (morePulses.length > 8 ? (
-                          <ScrollArea orientation="horizontal" className="w-full pb-1">
-                            <div className="flex gap-4">{moreCards}</div>
-                          </ScrollArea>
+                          <PulseCarousel>{moreCards}</PulseCarousel>
                         ) : (
                           <div className="flex flex-wrap justify-center gap-4">{moreCards}</div>
                         ))}
