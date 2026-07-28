@@ -113,6 +113,10 @@ function App() {
   const [cursorTimestampMs, setCursorTimestampMs] = useState<number | null>(null);
   const [latestEditedWords, setLatestEditedWords] = useState<EditableWord[]>([]);
   const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
+  // AI editorial-agent status, and an epoch that remounts MediaEditor when the
+  // agent writes a new proposal (initialEditedWords only applies on mount)
+  const [agentStatus, setAgentStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
+  const [editorEpoch, setEditorEpoch] = useState(0);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportName, setExportName] = useState('');
   const [exportCaptions, setExportCaptions] = useState(false);
@@ -863,6 +867,76 @@ function App() {
     handleExport(exportName);
   };
 
+  // AI edit: an LLM proposes content cuts (fillers, false starts, repeats)
+  // server-side, saved as a reviewable proposal. Poll, then reload the edits
+  // and remount the editor so the strikethroughs — and a one-step ⌘Z — appear.
+  const handleAgentEdit = async () => {
+    if (!artipodId || agentStatus === 'running') return;
+    const words = transcriptionResult?.transcript?.words;
+    if (!words || words.length === 0) return;
+    setAgentStatus('running');
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/artipod/${artipodId}/agent-edit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        body: JSON.stringify({ words }),
+      });
+
+      if (response.status === 401) {
+        setAgentStatus('idle');
+        setShowApiKeyModal(true);
+        return;
+      }
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `AI edit failed (${response.status})`);
+      }
+
+      const { jobId } = await response.json();
+
+      // Poll until the proposal is written
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const statusRes = await fetch(`/api/agent-edit/status/${jobId}`);
+        const status = await statusRes.json().catch(() => ({}));
+
+        if (statusRes.ok && status.status === 'completed') {
+          // Load the saved proposal and remount the editor to show it
+          const editsRes = await fetch(`/api/artipod/${artipodId}/edits`);
+          const edits = await editsRes.json().catch(() => ({}));
+          if (edits.hasEdits && edits.editedWords) {
+            setSavedEditorState({
+              editedWords: edits.editedWords,
+              undoStack: edits.undoStack || [],
+              speedMarkers: edits.speedMarkers || [],
+              defaultSpeed: edits.defaultSpeed ?? 1,
+              savedAt: edits.savedAt,
+            });
+            setEditorEpoch((e) => e + 1);
+          }
+          setAgentStatus('success');
+          setTimeout(() => setAgentStatus('idle'), 3000);
+          return;
+        }
+
+        if (!statusRes.ok) {
+          throw new Error(status.message || status.error || 'AI edit failed');
+        }
+      }
+    } catch (err) {
+      console.error('AI edit failed:', err);
+      setError(err instanceof Error ? err.message : 'AI edit failed');
+      setAgentStatus('error');
+      setTimeout(() => setAgentStatus('idle'), 3000);
+    }
+  };
+
   const handleApiKeySubmit = () => {
     const key = pendingApiKey.trim();
     if (key) {
@@ -1238,6 +1312,19 @@ function App() {
               </select>
               <Button
                 size="sm"
+                variant="secondary"
+                onClick={handleAgentEdit}
+                isLoading={agentStatus === 'running'}
+                loadingText="AI editing…"
+                title="Let AI propose cuts (fillers, false starts, repeats) for you to review"
+                aria-label="AI edit transcript"
+              >
+                {agentStatus === 'success' ? 'AI edited ✓' :
+                 agentStatus === 'error' ? 'AI edit failed' :
+                 '✨ AI edit'}
+              </Button>
+              <Button
+                size="sm"
                 onClick={openExportModal}
                 isLoading={exportStatus === 'exporting'}
                 loadingText="Exporting…"
@@ -1351,6 +1438,7 @@ function App() {
           <>
             <div className={viewMode === 'data' ? 'app__hidden-editor' : 'app__editor-pane'}>
               <MediaEditor
+                key={editorEpoch}
                 src={mediaUrl!}
                 transcript={transcriptionResult.transcript}
                 initialEditedWords={savedEditorState?.editedWords}

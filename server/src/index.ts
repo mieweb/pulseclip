@@ -11,6 +11,7 @@ import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, 
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
 import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
 import { buildExportPlan, buildSrt, renderExport, canBurnSubtitles, EXPORT_FILENAMES } from './export.js';
+import { generateAgentEdit, buildBaseline, AgentNotConfiguredError } from './agent.js';
 
 // Load environment variables
 dotenv.config();
@@ -39,6 +40,25 @@ interface ExportJob {
   createdAt: number;
 }
 const exportJobs = new Map<string, ExportJob>();
+
+// --- Async editorial-agent (LLM proposal) job store ---
+interface AgentJob {
+  id: string;
+  status: 'processing' | 'completed' | 'error';
+  result?: {
+    summary: string;
+    deletedCount: number;
+    contentCount: number;
+    silenceCount: number;
+    provider: string;
+    model: string;
+  };
+  error?: string;
+  /** True when the failure is "no LLM configured" (a 503, not a 500) */
+  notConfigured?: boolean;
+  createdAt: number;
+}
+const agentJobs = new Map<string, AgentJob>();
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -764,6 +784,119 @@ app.get('/api/export/status/:jobId', (req, res) => {
   if (job.status === 'error') {
     exportJobs.delete(jobId);
     return res.status(500).json({ error: 'Export failed', message: job.error });
+  }
+
+  res.json({ status: 'processing', jobId });
+});
+
+// Editorial agent (protected): an LLM reads the transcript and proposes content
+// deletions (fillers, false starts, repeats). The proposal is written to
+// edits.json for the human to review in the editor — NEVER auto-exported. The
+// prior editor state is kept as a single undo snapshot, and saved speed
+// settings are preserved. Always async — returns 202 + jobId for polling.
+app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+
+  if (!existsSync(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+
+  const words = req.body?.words;
+  const instructions = typeof req.body?.instructions === 'string' ? req.body.instructions : undefined;
+
+  if (!Array.isArray(words) || words.length === 0) {
+    return res.status(400).json({ error: 'words must be a non-empty array of transcript words' });
+  }
+
+  const jobId = randomUUID();
+  agentJobs.set(jobId, { id: jobId, status: 'processing', createdAt: Date.now() });
+  console.log(`Agent-edit job ${jobId} started for artipod ${artipodId}: ${words.length} transcript words`);
+
+  (async () => {
+    const result = await generateAgentEdit({ words, instructions });
+
+    // Keep the prior editor state as one undo snapshot so the human can revert
+    // the whole proposal with a single ⌘Z. Fall back to the fresh silence-
+    // inserted baseline (the un-edited editor view) when nothing was saved.
+    const editsPath = join(artipodPath, 'edits.json');
+    let existing: any = {};
+    if (existsSync(editsPath)) {
+      try { existing = JSON.parse(readFileSync(editsPath, 'utf-8')); } catch { existing = {}; }
+    }
+    const priorEditedWords =
+      Array.isArray(existing.editedWords) && existing.editedWords.length > 0
+        ? existing.editedWords
+        : buildBaseline(words);
+    const priorUndoStack = Array.isArray(existing.undoStack) ? existing.undoStack : [];
+
+    const editsData = {
+      editedWords: result.editedWords,
+      undoStack: [...priorUndoStack, priorEditedWords],
+      speedMarkers: Array.isArray(existing.speedMarkers) ? existing.speedMarkers : [],
+      defaultSpeed: typeof existing.defaultSpeed === 'number' ? existing.defaultSpeed : 1,
+      savedAt: new Date().toISOString(),
+    };
+    writeFileSync(editsPath, JSON.stringify(editsData, null, 2));
+
+    return result;
+  })()
+    .then((result) => {
+      agentJobs.set(jobId, {
+        id: jobId,
+        status: 'completed',
+        result: {
+          summary: result.summary,
+          deletedCount: result.deletedCount,
+          contentCount: result.contentCount,
+          silenceCount: result.silenceCount,
+          provider: result.provider,
+          model: result.model,
+        },
+        createdAt: Date.now(),
+      });
+      console.log(
+        `Agent-edit job ${jobId} completed: deleted ${result.deletedCount}/${result.contentCount} words + ${result.silenceCount} silences (${result.provider}/${result.model})`
+      );
+    })
+    .catch((error) => {
+      const notConfigured = error instanceof AgentNotConfiguredError;
+      agentJobs.set(jobId, {
+        id: jobId,
+        status: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        notConfigured,
+        createdAt: Date.now(),
+      });
+      console.error(`Agent-edit job ${jobId} failed:`, error);
+    });
+
+  res.status(202).json({ jobId, status: 'processing' });
+});
+
+// Poll for async agent-edit job status
+app.get('/api/agent-edit/status/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = agentJobs.get(jobId);
+
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  if (job.status === 'completed') {
+    agentJobs.delete(jobId);
+    return res.json({ status: 'completed', ...job.result });
+  }
+
+  if (job.status === 'error') {
+    agentJobs.delete(jobId);
+    // 503 when the server simply has no LLM configured (e.g. the dev box before
+    // a key is seeded); 500 for a genuine LLM/validation failure.
+    return res.status(job.notConfigured ? 503 : 500).json({
+      error: 'Agent edit failed',
+      message: job.error,
+      notConfigured: job.notConfigured,
+    });
   }
 
   res.json({ status: 'processing', jobId });
