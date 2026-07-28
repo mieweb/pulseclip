@@ -409,7 +409,13 @@ export async function renderExport(
   }
   args.push('-filter_complex_script', scriptPath);
   if (hasVideo) {
-    args.push('-map', videoOut, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p');
+    // Keyframe every 2s: x264's default ~10s GOP makes some browsers stutter
+    // and snap back when scrubbing a streamed export; dense keyframes keep
+    // seeking accurate everywhere at a small size cost
+    args.push(
+      '-map', videoOut, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20',
+      '-pix_fmt', 'yuv420p', '-force_key_frames', 'expr:gte(t,n_forced*2)'
+    );
   }
   if (hasAudio) {
     args.push('-map', '[outa]', '-c:a', 'aac');
