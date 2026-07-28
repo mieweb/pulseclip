@@ -1,4 +1,10 @@
 import { AssemblyAI } from 'assemblyai';
+import { execFile } from 'child_process';
+import { promisify } from 'util';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { randomUUID } from 'crypto';
+import { unlink } from 'fs/promises';
 import type {
   TranscriptionProvider,
   ProviderResult,
@@ -25,11 +31,41 @@ export class AssemblyAIProvider implements TranscriptionProvider {
     mediaUrl: string,
     options?: TranscriptionOptions
   ): Promise<ProviderResult> {
+    // For local files, extract the audio track before uploading: the SDK
+    // otherwise ships the ENTIRE video to AssemblyAI (a 15-minute clip is
+    // ~0.5-1 GB; its mono 16k audio is ~5 MB), which dominated long-video
+    // transcription time. Extraction failure falls back to the original file.
+    let audioInput = mediaUrl;
+    let tempAudio: string | null = null;
+    if (!/^https?:\/\//i.test(mediaUrl)) {
+      const candidate = join(tmpdir(), `aai-${randomUUID()}.m4a`);
+      try {
+        await promisify(execFile)('ffmpeg', [
+          '-y', '-i', mediaUrl, '-vn', '-ac', '1', '-ar', '16000',
+          '-c:a', 'aac', '-b:a', '48k', candidate,
+        ]);
+        tempAudio = candidate;
+        audioInput = candidate;
+      } catch {
+        console.warn('[assemblyai] audio extraction failed, uploading original media');
+      }
+    }
+    try {
+      return await this.transcribeAudio(audioInput, options);
+    } finally {
+      if (tempAudio) unlink(tempAudio).catch(() => {});
+    }
+  }
+
+  private async transcribeAudio(
+    audioInput: string,
+    options?: TranscriptionOptions
+  ): Promise<ProviderResult> {
     // Submit transcription request
     // Enable disfluencies (filler words like "um", "uh") for raw transcription
     // Disable format_text to prevent cleanup and get precise output
     const transcript = await this.client.transcripts.transcribe({
-      audio: mediaUrl,
+      audio: audioInput,
       speaker_labels: options?.speakerLabels ?? false,
       // universal-3-pro was deprecated by AssemblyAI (July 2026); universal-3-5-pro replaces it
       speech_models: options?.speech_models ?? ["universal-3-5-pro", "universal-2"],
