@@ -18,6 +18,7 @@ import { TranscriptDataView } from './components/TranscriptDataView';
 import { rasterizeLowerThird } from './lib/rasterize';
 import type { Provider, TranscriptionResult, FeaturedPulse, ArtipodListItem, EditableWord, SpeedMarker, PlaybackSpeed } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
+import { myUploadIds, rememberMyUpload } from './lib/myUploads';
 import './App.scss';
 
 type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
@@ -486,6 +487,7 @@ function App() {
   }, []);
 
   const handleFileUploaded = (url: string, newArtipodId: string, filename: string) => {
+    rememberMyUpload(newArtipodId);
     // Reset auto-transcribe flag for new file
     hasAutoTranscribed.current = false;
     setMediaUrl(url);
@@ -1240,7 +1242,12 @@ function App() {
                   </>
                 )}
                 {(() => {
-                  const morePulses = allPulses.filter((p) => !p.featured);
+                  // Featured plus THIS browser's uploads — visitors don't
+                  // browse each other's videos from the homepage
+                  const mine = myUploadIds();
+                  const morePulses = allPulses.filter(
+                    (p) => !p.featured && mine.has(p.artipodId)
+                  );
                   if (morePulses.length === 0) return null;
                   const moreCards = morePulses.map((p) => (
                     <FeaturedPulseCard
@@ -1275,7 +1282,7 @@ function App() {
                         onClick={() => setShowAllPulses((v) => !v)}
                         aria-expanded={showAllPulses}
                       >
-                        {showAllPulses ? 'Hide' : `Show all (${morePulses.length})`}
+                        {showAllPulses ? 'Hide' : `My uploads (${morePulses.length})`}
                       </Button>
                     </div>
                   );

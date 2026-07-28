@@ -3,6 +3,7 @@ import { useState, useEffect } from 'react';
 import { Card } from '@mieweb/ui/components/Card';
 import { Button } from '@mieweb/ui/components/Button';
 import { Modal, ModalHeader, ModalTitle, ModalClose, ModalBody } from '@mieweb/ui/components/Modal';
+import { rememberMyUpload } from '../lib/myUploads';
 
 /** Store pages for the Pulse app — static, shown before any pairing fetch */
 const STORE_LINKS = {
@@ -48,6 +49,8 @@ interface PulseCamDeeplinkResponse {
   deeplink: string;
   serverUrl: string;
   token: string;
+  /** The artipod id the phone upload will land in */
+  artifactId?: string;
   appStoreLinks: {
     ios: string;
     android: string;
@@ -86,6 +89,9 @@ export const PulseCamButton: FC<PulseCamButtonProps> = ({ onError }) => {
       }
       const data = await response.json();
       setDeeplinkData(data);
+      // Claim the pairing's artipod as this browser's upload so it shows in
+      // "My uploads" when the phone finishes
+      if (data.artifactId) rememberMyUpload(data.artifactId);
 
       if (isMobile) {
         // On mobile, try to open the app directly
