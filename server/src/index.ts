@@ -552,8 +552,10 @@ app.get('/api/artipod/:artipodId', (req, res) => {
   const fileUrl = `/artipods/${artipodId}/${mediaFile}`;
   
   // Check for thumbnail
-  const thumbnailPath = join(artipodPath, 'thumbnail.png');
-  const thumbnailUrl = existsSync(thumbnailPath) ? `/artipods/${artipodId}/thumbnail.png` : undefined;
+  const thumbnailFile = ['thumbnail.png', 'thumbnail.jpg'].find(f =>
+    existsSync(join(artipodPath, f))
+  );
+  const thumbnailUrl = thumbnailFile ? `/artipods/${artipodId}/${thumbnailFile}` : undefined;
   
   res.json({
     success: true,

@@ -78,6 +78,19 @@ async function handleUploadComplete(
     const src = join(storage.workspaceRoot, 'captions', `${ctx.artifactId}${ext}`);
     copyFileSync(src, join(artipodPath, basename(sidecar.filename || `captions${ext}`)));
     console.log(`[VAULT] captions ${ctx.artifactId} -> artipod ${sidecar.relatedTo}`);
+    return;
+  }
+
+  if (ctx.kind === 'thumbnail' && sidecar?.relatedTo) {
+    const artipodPath = join(ARTIPODS_DIR, sidecar.relatedTo);
+    if (!existsSync(artipodPath)) return;
+    const ext = sidecar.ext ?? '.jpg';
+    const src = join(storage.workspaceRoot, 'thumbnail', `${ctx.artifactId}${ext}`);
+    // Normalize to the two names the app knows (media detection excludes
+    // them; the artipod route and OG tags look them up)
+    const dest = ext === '.png' ? 'thumbnail.png' : 'thumbnail.jpg';
+    copyFileSync(src, join(artipodPath, dest));
+    console.log(`[VAULT] thumbnail ${ctx.artifactId} -> artipod ${sidecar.relatedTo}/${dest}`);
   }
 }
 
