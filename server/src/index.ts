@@ -972,9 +972,12 @@ if (existsSync(clientDistPath)) {
   });
 }
 
-app.listen(port, '127.0.0.1', () => {
+// Loopback by default (production sits behind the oauth2-proxy edge);
+// HOST=0.0.0.0 opens it up for LAN testing with the PulseCam app.
+const host = process.env.HOST || '127.0.0.1';
+app.listen(port, host, () => {
   console.log(`Available providers: ${providerRegistry.list().map((p) => p.displayName).join(', ')}`);
-  console.log(`Server running on http://localhost:${port}`);
+  console.log(`Server running on http://${host}:${port}`);
   if (existsSync(clientDistPath)) {
     console.log(`Serving client from ${clientDistPath}`);
   }
