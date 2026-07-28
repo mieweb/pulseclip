@@ -24,17 +24,11 @@ export class ProviderRegistry {
   }
 }
 
-// Initialize providers
+// Initialize providers. Registration order matters: the client defaults to
+// the FIRST provider, so local Whisper (free, keyless, on-box) goes ahead of
+// AssemblyAI (cloud, billed to this deployment's API key).
 export function initializeProviders(): ProviderRegistry {
   const registry = new ProviderRegistry();
-
-  // Register AssemblyAI if API key is available
-  const assemblyAIKey = process.env.ASSEMBLYAI_API_KEY;
-  if (assemblyAIKey) {
-    registry.register(new AssemblyAIProvider(assemblyAIKey));
-  } else {
-    console.warn('ASSEMBLYAI_API_KEY not found in environment');
-  }
 
   // Register local Whisper if model path(s) are configured - comma-separated
   // paths each register as their own provider, so the dropdown doubles as a
@@ -65,6 +59,15 @@ export function initializeProviders(): ProviderRegistry {
         })
       );
     }
+  }
+
+  // Register AssemblyAI if API key is available (after Whisper: cloud is the
+  // opt-in, not the default)
+  const assemblyAIKey = process.env.ASSEMBLYAI_API_KEY;
+  if (assemblyAIKey) {
+    registry.register(new AssemblyAIProvider(assemblyAIKey));
+  } else {
+    console.warn('ASSEMBLYAI_API_KEY not found in environment');
   }
 
   return registry;
