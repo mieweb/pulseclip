@@ -71,10 +71,12 @@ const port = process.env.PORT || 3000;
 // Initialize provider registry
 const providerRegistry = initializeProviders();
 
-// Secret key for protected endpoints
+// Secret key for ADMIN endpoints only (curation + destructive ops: feature,
+// delete, cache clear). Participation routes — upload, edit, export, agent —
+// are open: visitors must be able to use the product without a key.
 const secretKey = process.env.SECRET_KEY;
 
-// Auth middleware for protected endpoints
+// Auth middleware for admin endpoints
 const requireAuth: express.RequestHandler = (req, res, next) => {
   if (!secretKey) {
     // No secret key configured, allow all requests
@@ -281,7 +283,7 @@ app.get('/api/pulsecam/deeplink', (req, res) => {
 
 // Upload pulse (protected) - creates an artipod folder with UUID
 // Includes duplicate detection based on file checksum
-app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
+app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
@@ -709,7 +711,7 @@ app.get('/api/artipod/:artipodId/edits', (req, res) => {
 
 // Save editor state (protected). Fields not sent keep their saved values, so
 // a speed-only save cannot clobber the undo history and vice versa.
-app.put('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
+app.put('/api/artipod/:artipodId/edits', (req, res) => {
   const { artipodId } = req.params;
   const { editedWords, undoStack, speedMarkers, defaultSpeed, savedAt } = req.body;
 
@@ -750,7 +752,7 @@ app.put('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
 });
 
 // Delete editor state (protected)
-app.delete('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
+app.delete('/api/artipod/:artipodId/edits', (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
   
@@ -771,7 +773,7 @@ app.delete('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
 // Export: render the edit list to a new media file with ffmpeg (protected).
 // Body may carry { editedWords } (the live editor state); falls back to the
 // saved edits.json. Always async — returns 202 + jobId for polling.
-app.post('/api/artipod/:artipodId/export', requireAuth, async (req, res) => {
+app.post('/api/artipod/:artipodId/export', async (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
 
@@ -899,7 +901,7 @@ app.get('/api/export/status/:jobId', (req, res) => {
 // edits.json for the human to review in the editor — NEVER auto-exported. The
 // prior editor state is kept as a single undo snapshot, and saved speed
 // settings are preserved. Always async — returns 202 + jobId for polling.
-app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
+app.post('/api/artipod/:artipodId/agent-edit', (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
 
@@ -1127,7 +1129,7 @@ app.get('/api/cache/stats', (_req, res) => {
   res.json(stats);
 });
 
-app.delete('/api/cache', (_req, res) => {
+app.delete('/api/cache', requireAuth, (_req, res) => {
   clearCache();
   res.json({ success: true, message: 'Cache cleared' });
 });
