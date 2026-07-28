@@ -387,13 +387,9 @@ app.post('/api/transcribe', async (req, res) => {
       console.log(`Skipping cache for ${filename} (re-transcribe requested)`);
     }
 
-    // Auth required for actual transcription (uses paid API)
-    if (secretKey) {
-      const providedKey = req.headers['x-api-key'] as string;
-      if (!providedKey || providedKey !== secretKey) {
-        return res.status(401).json({ error: 'Unauthorized', message: 'Valid API key required for transcription' });
-      }
-    }
+    // Transcription is open: the default provider is local Whisper (free,
+    // on-box). AssemblyAI is the one paid path — visitors picking it spend
+    // this deployment's key, which is acceptable as a deliberate opt-in.
 
     // Check file size to determine sync vs async transcription
     // (providers marked alwaysAsync are too slow to hold an HTTP request open)
