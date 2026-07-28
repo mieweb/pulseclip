@@ -6,6 +6,7 @@ import { MediaPlayer, type MediaPlayerRef } from '@mieweb/ui/components/MediaPla
 import { MediaEditor } from '@mieweb/ui/components/MediaEditor';
 import { ThemeToggle } from '@mieweb/ui/components/ThemeProvider';
 import { Card, CardContent } from '@mieweb/ui/components/Card';
+import { ScrollArea } from '@mieweb/ui/components/ScrollArea';
 import { Button } from '@mieweb/ui/components/Button';
 import { Alert } from '@mieweb/ui/components/Alert';
 import { Input } from '@mieweb/ui/components/Input';
@@ -1226,37 +1227,35 @@ function App() {
                 {(() => {
                   const morePulses = allPulses.filter((p) => !p.featured);
                   if (morePulses.length === 0) return null;
+                  const moreCards = morePulses.map((p) => (
+                    <FeaturedPulseCard
+                      key={p.artipodId}
+                      pulse={{
+                        artipodId: p.artipodId,
+                        title:
+                          p.title ||
+                          `Uploaded ${new Date(p.uploadedAt).toLocaleString(undefined, {
+                            month: 'short',
+                            day: 'numeric',
+                            hour: 'numeric',
+                            minute: '2-digit',
+                          })}`,
+                        thumbnail: p.thumbnail,
+                        addedAt: p.uploadedAt,
+                      }}
+                      onOpen={() => navigate(`/artipod/${p.artipodId}`)}
+                    />
+                  ));
                   return (
                     <div className="mt-4 flex flex-col items-center gap-4">
-                      {showAllPulses && (
-                        <div
-                          className={
-                            morePulses.length > 8
-                              ? 'flex w-full gap-4 overflow-x-auto pb-2'
-                              : 'flex flex-wrap justify-center gap-4'
-                          }
-                        >
-                          {morePulses.map((p) => (
-                            <FeaturedPulseCard
-                              key={p.artipodId}
-                              pulse={{
-                                artipodId: p.artipodId,
-                                title:
-                                  p.title ||
-                                  `Uploaded ${new Date(p.uploadedAt).toLocaleString(undefined, {
-                                    month: 'short',
-                                    day: 'numeric',
-                                    hour: 'numeric',
-                                    minute: '2-digit',
-                                  })}`,
-                                thumbnail: p.thumbnail,
-                                addedAt: p.uploadedAt,
-                              }}
-                              onOpen={() => navigate(`/artipod/${p.artipodId}`)}
-                            />
-                          ))}
-                        </div>
-                      )}
+                      {showAllPulses &&
+                        (morePulses.length > 8 ? (
+                          <ScrollArea orientation="horizontal" className="w-full pb-1">
+                            <div className="flex gap-4">{moreCards}</div>
+                          </ScrollArea>
+                        ) : (
+                          <div className="flex flex-wrap justify-center gap-4">{moreCards}</div>
+                        ))}
                       <Button
                         size="sm"
                         variant="secondary"
