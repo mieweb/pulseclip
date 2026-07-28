@@ -224,6 +224,26 @@ async function probeStreams(mediaPath: string): Promise<{ hasVideo: boolean; has
   };
 }
 
+/** Pixel dimensions of the first video stream, or null if it can't be read */
+async function probeVideoSize(mediaPath: string): Promise<{ width: number; height: number } | null> {
+  try {
+    const { stdout } = await execFileAsync(ffprobePath, [
+      '-v', 'error',
+      '-select_streams', 'v:0',
+      '-show_entries', 'stream=width,height',
+      '-of', 'csv=p=0',
+      mediaPath,
+    ]);
+    const [width, height] = stdout.trim().split(',').map((n) => parseInt(n, 10));
+    if (Number.isFinite(width) && Number.isFinite(height) && width > 0 && height > 0) {
+      return { width, height };
+    }
+  } catch {
+    /* fall through */
+  }
+  return null;
+}
+
 const toSeconds = (ms: number): string => (ms / 1000).toFixed(3);
 
 // The subtitles filter needs an ffmpeg built with libass (present on the dev
@@ -252,12 +272,20 @@ export async function canBurnSubtitles(): Promise<boolean> {
  * graph grows with segment count and would overflow the argv limit on heavily
  * edited transcripts.
  */
+/** Placement of the branded lower-third: which ffmpeg input carries the PNG, and how to scale/time it */
+interface LowerThirdOverlay {
+  inputIndex: number;
+  scaleWidth: number;
+  durationSec: number;
+}
+
 function buildFilterScript(
   segments: ExportSegment[],
   hasVideo: boolean,
   hasAudio: boolean,
-  srtPath?: string | null
-): string {
+  srtPath?: string | null,
+  overlay?: LowerThirdOverlay | null
+): { script: string; videoOut: string } {
   const chains: string[] = [];
   const concatInputs: string[] = [];
 
@@ -286,13 +314,27 @@ function buildFilterScript(
     `${concatInputs.join('')}concat=n=${segments.length}:v=${hasVideo ? 1 : 0}:a=${hasAudio ? 1 : 0}${outLabels}`
   );
 
+  let videoOut = hasVideo ? '[outv]' : '';
+
   if (srtPath && hasVideo) {
     // No quoting: artipod paths contain no filtergraph metacharacters, and the
     // filter parser rejects quoted values inside a script file
-    chains.push(`[outv]subtitles=filename=${srtPath}[outvs]`);
+    chains.push(`${videoOut}subtitles=filename=${srtPath}[outvs]`);
+    videoOut = '[outvs]';
   }
 
-  return chains.join(';\n');
+  if (overlay && hasVideo) {
+    // Scale the lower-third PNG to the video width and composite it at the
+    // bottom for the opening seconds. shortest=1 ends the render with the main
+    // stream (the looped image input is otherwise infinite).
+    chains.push(`[${overlay.inputIndex}:v]scale=${overlay.scaleWidth}:-1:flags=lanczos[lt]`);
+    chains.push(
+      `${videoOut}[lt]overlay=0:H-h:enable='between(t,0,${overlay.durationSec})':shortest=1[outlt]`
+    );
+    videoOut = '[outlt]';
+  }
+
+  return { script: chains.join(';\n'), videoOut };
 }
 
 export interface ExportResult {
@@ -307,11 +349,24 @@ export interface ExportResult {
  * the UI can find it. When srtPath is given (video only) the captions are
  * burned in via the subtitles filter.
  */
+// How long the branded lower-third stays on screen at the start of the video
+const LOWER_THIRD_DURATION_SEC = 5;
+
+/** Decodes a `data:image/png;base64,...` URL to a temp PNG, or null if malformed */
+function writeDataUrlPng(dataUrl: string): string | null {
+  const match = /^data:image\/png;base64,(.+)$/s.exec(dataUrl.trim());
+  if (!match) return null;
+  const path = join(tmpdir(), `pulseclip-lowerthird-${randomUUID()}.png`);
+  writeFileSync(path, Buffer.from(match[1], 'base64'));
+  return path;
+}
+
 export async function renderExport(
   mediaPath: string,
   artipodPath: string,
   plan: ExportPlan,
-  srtPath?: string | null
+  srtPath?: string | null,
+  lowerThirdDataUrl?: string | null
 ): Promise<ExportResult> {
   const { segments } = plan;
   if (segments.length === 0) {
@@ -328,11 +383,33 @@ export async function renderExport(
   const scriptPath = join(tmpdir(), `pulseclip-export-${randomUUID()}.filter`);
   const tmpOutPath = join(artipodPath, `.export-tmp-${randomUUID()}${hasVideo ? '.mp4' : '.m4a'}`);
 
-  writeFileSync(scriptPath, buildFilterScript(segments, hasVideo, hasAudio, burnSrt));
+  // The lower-third is overlaid only when there's a video stream and we can
+  // read its width to scale to. A bad PNG or unreadable size degrades to a
+  // plain export rather than failing the job.
+  let lowerThirdPath: string | null = null;
+  let overlay: LowerThirdOverlay | null = null;
+  if (hasVideo && lowerThirdDataUrl) {
+    lowerThirdPath = writeDataUrlPng(lowerThirdDataUrl);
+    const size = lowerThirdPath ? await probeVideoSize(mediaPath) : null;
+    if (lowerThirdPath && size) {
+      overlay = { inputIndex: 1, scaleWidth: size.width, durationSec: LOWER_THIRD_DURATION_SEC };
+    } else if (lowerThirdPath) {
+      console.warn('Lower-third requested but video size unreadable; rendering without it');
+    }
+  }
 
-  const args = ['-y', '-i', mediaPath, '-filter_complex_script', scriptPath];
+  const { script, videoOut } = buildFilterScript(segments, hasVideo, hasAudio, burnSrt, overlay);
+  writeFileSync(scriptPath, script);
+
+  const args = ['-y', '-i', mediaPath];
+  // The lower-third PNG is input 1 (matches overlay.inputIndex); looped so it
+  // provides frames across the timeline (overlay's shortest=1 bounds the output)
+  if (overlay && lowerThirdPath) {
+    args.push('-loop', '1', '-i', lowerThirdPath);
+  }
+  args.push('-filter_complex_script', scriptPath);
   if (hasVideo) {
-    args.push('-map', burnSrt ? '[outvs]' : '[outv]', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p');
+    args.push('-map', videoOut, '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '20', '-pix_fmt', 'yuv420p');
   }
   if (hasAudio) {
     args.push('-map', '[outa]', '-c:a', 'aac');
@@ -350,6 +427,9 @@ export async function renderExport(
     throw error;
   } finally {
     try { unlinkSync(scriptPath); } catch { /* may not exist */ }
+    if (lowerThirdPath) {
+      try { unlinkSync(lowerThirdPath); } catch { /* may not exist */ }
+    }
   }
 
   return { filename, durationMs: Math.round(plan.durationMs) };

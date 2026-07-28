@@ -704,6 +704,8 @@ app.post('/api/artipod/:artipodId/export', requireAuth, async (req, res) => {
   let speedMarkers = req.body?.speedMarkers;
   let defaultSpeed = req.body?.defaultSpeed;
   const burnCaptions = req.body?.captions === true;
+  // Optional MIE brand lower-third, rasterized client-side to a PNG data URL
+  const lowerThird = typeof req.body?.lowerThird === 'string' ? req.body.lowerThird : undefined;
 
   // Anything not sent falls back to the saved editor state
   const editsPath = join(artipodPath, 'edits.json');
@@ -754,7 +756,7 @@ app.post('/api/artipod/:artipodId/export', requireAuth, async (req, res) => {
     `${burn ? ', captions burned' : ''}`
   );
 
-  renderExport(join(artipodPath, mediaFile), artipodPath, plan, burn ? srtPath : null)
+  renderExport(join(artipodPath, mediaFile), artipodPath, plan, burn ? srtPath : null, lowerThird)
     .then(({ filename, durationMs }) => {
       exportJobs.set(jobId, {
         id: jobId,

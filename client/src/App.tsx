@@ -15,6 +15,7 @@ import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
 import { AudioLines, Film, Zap, Scissors, Type } from 'lucide-react';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
+import { rasterizeLowerThird } from './lib/rasterize';
 import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord, SpeedMarker, PlaybackSpeed } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
 import './App.scss';
@@ -120,6 +121,9 @@ function App() {
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportName, setExportName] = useState('');
   const [exportCaptions, setExportCaptions] = useState(false);
+  // MIE brand lower-third (title bar) baked into the export
+  const [exportLowerThird, setExportLowerThird] = useState(false);
+  const [exportTitle, setExportTitle] = useState('');
   // Refs mirror the live editor state so stable callbacks (speed saves, export)
   // always read current values without re-creating on every edit
   const latestEditedWordsRef = useRef<EditableWord[]>([]);
@@ -793,6 +797,18 @@ function App() {
     setError(null);
 
     try {
+      // Rasterize the MIE lower-third (an @mieweb/ui component) to a PNG the
+      // server composites over the video. Non-fatal: a render hiccup just
+      // exports without the title bar.
+      let lowerThird: string | undefined;
+      if (exportLowerThird) {
+        try {
+          lowerThird = await rasterizeLowerThird(exportTitle.trim() || downloadName || 'PulseClip');
+        } catch (err) {
+          console.error('Lower-third render failed; exporting without it:', err);
+        }
+      }
+
       const response = await fetch(`/api/artipod/${artipodId}/export`, {
         method: 'POST',
         headers: {
@@ -805,6 +821,7 @@ function App() {
           speedMarkers: latestSpeedState.current.speedMarkers,
           defaultSpeed: latestSpeedState.current.defaultSpeed,
           captions: exportCaptions,
+          ...(lowerThird ? { lowerThird } : {}),
         }),
       });
 
@@ -858,6 +875,7 @@ function App() {
   const openExportModal = () => {
     const base = mediaFilename.replace(/\.[^.]+$/, '') || 'export';
     setExportName(`${base}-edited`);
+    if (!exportTitle) setExportTitle(base);
     setShowExportModal(true);
   };
 
@@ -971,6 +989,19 @@ function App() {
             checked={exportCaptions}
             onChange={(e) => setExportCaptions(e.target.checked)}
           />
+          <Checkbox
+            label="Add MIE title bar (lower-third)"
+            checked={exportLowerThird}
+            onChange={(e) => setExportLowerThird(e.target.checked)}
+          />
+          {exportLowerThird && (
+            <Input
+              label="Title bar text"
+              value={exportTitle}
+              onChange={(e) => setExportTitle(e.target.value)}
+              placeholder="Shown in the on-screen title bar"
+            />
+          )}
         </div>
       </ModalBody>
       <ModalFooter>
