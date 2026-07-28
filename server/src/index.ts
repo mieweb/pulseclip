@@ -9,9 +9,10 @@ import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
 import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
-import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
+import { createTusRouter, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
 import { buildExportPlan, buildSrt, renderExport, canBurnSubtitles, EXPORT_FILENAMES } from './export.js';
 import { generateAgentEdit, buildBaseline, AgentNotConfiguredError } from './agent.js';
+import { pulseVault, mintPulseCamPairing } from './pulsevault.js';
 
 // Load environment variables
 dotenv.config();
@@ -117,6 +118,13 @@ app.use(express.json({ limit: '10mb' })); // Increased limit for base64 image up
 // TUS resumable upload router (must be before body parsing affects routes)
 app.use('/uploads', createTusRouter());
 
+// PulseVault resumable-upload lane (@mieweb/pulsevault/core) — the PulseCam
+// pairing target. The legacy hand-rolled TUS router above stays mounted
+// until phone-side compatibility is confirmed in the field, then it goes.
+app.use('/pulsevault', (req, res, next) => {
+  pulseVault.handler(req, res, next).catch(next);
+});
+
 // Run cleanup of stale TUS uploads on startup and every hour
 cleanupStaleUploads();
 setInterval(cleanupStaleUploads, 60 * 60 * 1000);
@@ -167,27 +175,30 @@ app.get('/api/providers', (_req, res) => {
   res.json({ providers });
 });
 
-// Generate PulseCam deep link for mobile app integration
+// Generate PulseCam deep link for mobile app integration. Each call mints one
+// pairing session against the /pulsevault lane (fresh artifactId + capability
+// token when PULSEVAULT_SECRET is set).
 app.get('/api/pulsecam/deeplink', (req, res) => {
   // Determine the server URL from request headers
   const protocol = req.headers['x-forwarded-proto'] || req.protocol;
   const host = req.headers['x-forwarded-host'] || req.headers.host || 'localhost';
   const serverUrl = `${protocol}://${host}`;
-  
-  // Optional token for authentication (could be used for user-specific uploads)
-  const token = req.query.token as string || randomUUID();
-  
-  const deeplink = generatePulseCamDeepLink(serverUrl, token);
-  
-  res.json({
-    deeplink,
-    serverUrl,
-    token,
-    appStoreLinks: {
-      ios: 'https://apps.apple.com/us/app/pulse-cam/id6748621024',
-      android: 'https://play.google.com/store/apps/details?id=com.mieweb.pulse',
-    },
-  });
+
+  try {
+    const pairing = mintPulseCamPairing(serverUrl);
+    res.json({
+      ...pairing,
+      appStoreLinks: {
+        ios: 'https://apps.apple.com/us/app/pulse-cam/id6748621024',
+        android: 'https://play.google.com/store/apps/details?id=com.mieweb.pulse',
+      },
+    });
+  } catch (error) {
+    // buildUploadLink refuses plaintext public origins by design
+    res.status(500).json({
+      error: error instanceof Error ? error.message : 'Failed to mint pairing link',
+    });
+  }
 });
 
 // Upload pulse (protected) - creates an artipod folder with UUID
@@ -401,9 +412,17 @@ app.get('/api/transcribe/status/:jobId', (req, res) => {
 function findMediaInArtipod(artipodPath: string): string | null {
   if (!existsSync(artipodPath)) return null;
   const files = readdirSync(artipodPath);
-  // Find the first media file (exclude known asset files)
+  // Find the first media file (exclude known asset files, rendered exports,
+  // and caption sidecars — PulseCam merged uploads place a .vtt next to the
+  // video)
   const assetFiles = ['thumbnail.png', 'thumbnail.jpg', 'transcript.json', 'beats.json', 'edits.json', ...EXPORT_FILENAMES];
-  const mediaFile = files.find(f => !assetFiles.includes(f) && !f.startsWith('.'));
+  const mediaFile = files.find(
+    f =>
+      !assetFiles.includes(f) &&
+      !f.startsWith('.') &&
+      !f.endsWith('.vtt') &&
+      !f.endsWith('.srt')
+  );
   return mediaFile || null;
 }
 
