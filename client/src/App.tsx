@@ -16,7 +16,7 @@ import { AudioLines, Film, Zap, Scissors, Type } from 'lucide-react';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
 import { rasterizeLowerThird } from './lib/rasterize';
-import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord, SpeedMarker, PlaybackSpeed } from './types';
+import type { Provider, TranscriptionResult, FeaturedPulse, ArtipodListItem, EditableWord, SpeedMarker, PlaybackSpeed } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
 import './App.scss';
 
@@ -103,6 +103,9 @@ function App() {
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [pendingApiKey, setPendingApiKey] = useState('');
   const [featuredPulses, setFeaturedPulses] = useState<FeaturedPulse[]>([]);
+  const [allPulses, setAllPulses] = useState<ArtipodListItem[]>([]);
+  const [showAllPulses, setShowAllPulses] = useState(false);
+  const [agentAvailable, setAgentAvailable] = useState(false);
   const [isCurrentPulseFeatured, setIsCurrentPulseFeatured] = useState(false);
   const [showFeaturedModal, setShowFeaturedModal] = useState(false);
   const [featuredTitle, setFeaturedTitle] = useState('');
@@ -153,8 +156,23 @@ function App() {
             commitUrl: data.git.commitUrl,
           });
         }
+        setAgentAvailable(Boolean(data.agent?.configured));
       })
       .catch((err) => console.error('Failed to fetch version info:', err));
+  }, []);
+
+  // All uploads (the un-curated rest of the library). Refetched when the tab
+  // regains focus so a just-finished PulseCam upload appears without a reload.
+  useEffect(() => {
+    const loadAllPulses = () => {
+      fetch('/api/artipods')
+        .then((res) => res.json())
+        .then((data) => setAllPulses(data.artipods || []))
+        .catch((err) => console.error('Failed to load uploads:', err));
+    };
+    loadAllPulses();
+    window.addEventListener('focus', loadAllPulses);
+    return () => window.removeEventListener('focus', loadAllPulses);
   }, []);
 
   // Determine current view state
@@ -1170,21 +1188,66 @@ function App() {
 
         <main className="mx-auto w-full max-w-5xl px-6 py-10">
           <div className="flex flex-col gap-12">
-            {/* Featured pulses - prominent */}
-            {featuredPulses.length > 0 && (
+            {/* Featured pulses - prominent, with the rest of the library behind Show all */}
+            {(featuredPulses.length > 0 || allPulses.length > 0) && (
               <section aria-label="Featured pulses">
-                <h2 className="m-0 mb-4 text-center text-sm font-semibold uppercase tracking-widest text-muted-foreground">
-                  Featured Pulses
-                </h2>
-                <div className="flex flex-wrap justify-center gap-4">
-                  {featuredPulses.map((pulse) => (
-                    <FeaturedPulseCard
-                      key={pulse.artipodId}
-                      pulse={pulse}
-                      onOpen={() => navigate(`/artipod/${pulse.artipodId}`)}
-                    />
-                  ))}
-                </div>
+                {featuredPulses.length > 0 && (
+                  <>
+                    <h2 className="m-0 mb-4 text-center text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+                      Featured Pulses
+                    </h2>
+                    <div className="flex flex-wrap justify-center gap-4">
+                      {featuredPulses.map((pulse) => (
+                        <FeaturedPulseCard
+                          key={pulse.artipodId}
+                          pulse={pulse}
+                          onOpen={() => navigate(`/artipod/${pulse.artipodId}`)}
+                        />
+                      ))}
+                    </div>
+                  </>
+                )}
+                {(() => {
+                  const morePulses = allPulses.filter((p) => !p.featured);
+                  if (morePulses.length === 0) return null;
+                  return (
+                    <div className="mt-4 flex flex-col items-center gap-4">
+                      {showAllPulses && (
+                        <div className="flex flex-wrap justify-center gap-4">
+                          {morePulses.map((p) => (
+                            <FeaturedPulseCard
+                              key={p.artipodId}
+                              pulse={{
+                                artipodId: p.artipodId,
+                                title:
+                                  p.title ||
+                                  `Uploaded ${new Date(p.uploadedAt).toLocaleString(undefined, {
+                                    month: 'short',
+                                    day: 'numeric',
+                                    hour: 'numeric',
+                                    minute: '2-digit',
+                                  })}`,
+                                thumbnail: p.thumbnail,
+                                addedAt: p.uploadedAt,
+                              }}
+                              onOpen={() => navigate(`/artipod/${p.artipodId}`)}
+                            />
+                          ))}
+                        </div>
+                      )}
+                      <Button
+                        size="sm"
+                        variant="secondary"
+                        onClick={() => setShowAllPulses((v) => !v)}
+                        aria-expanded={showAllPulses}
+                      >
+                        {showAllPulses
+                          ? 'Show fewer'
+                          : `Show all uploads (${morePulses.length})`}
+                      </Button>
+                    </div>
+                  );
+                })()}
               </section>
             )}
 
@@ -1340,19 +1403,21 @@ function App() {
                   </option>
                 ))}
               </select>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={handleAgentEdit}
-                isLoading={agentStatus === 'running'}
-                loadingText="AI editing…"
-                title="Let AI propose cuts (fillers, false starts, repeats) for you to review"
-                aria-label="AI edit transcript"
-              >
-                {agentStatus === 'success' ? 'AI edited ✓' :
-                 agentStatus === 'error' ? 'AI edit failed' :
-                 '✨ AI edit'}
-              </Button>
+              {agentAvailable && (
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={handleAgentEdit}
+                  isLoading={agentStatus === 'running'}
+                  loadingText="AI editing…"
+                  title="Let AI propose cuts (fillers, false starts, repeats) for you to review"
+                  aria-label="AI edit transcript"
+                >
+                  {agentStatus === 'success' ? 'AI edited ✓' :
+                   agentStatus === 'error' ? 'AI edit failed' :
+                   '✨ AI edit'}
+                </Button>
+              )}
               <Button
                 size="sm"
                 onClick={openExportModal}

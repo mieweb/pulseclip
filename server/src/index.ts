@@ -11,7 +11,7 @@ import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, 
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
 import { createTusRouter, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
 import { buildExportPlan, buildSrt, renderExport, canBurnSubtitles, EXPORT_FILENAMES } from './export.js';
-import { generateAgentEdit, buildBaseline, AgentNotConfiguredError } from './agent.js';
+import { generateAgentEdit, buildBaseline, resolveAgentConfig, AgentNotConfiguredError } from './agent.js';
 import { pulseVault, mintPulseCamPairing } from './pulsevault.js';
 
 // Load environment variables
@@ -159,14 +159,72 @@ app.get('/api/about', async (_req, res) => {
         commitDate,
         commitUrl,
       },
+      agent: { configured: isAgentConfigured() },
     });
   } catch (error) {
     // Fallback if git not available
     res.json({
       name: 'PulseClip',
       git: null,
+      agent: { configured: isAgentConfigured() },
     });
   }
+});
+
+// Whether the editorial agent has an LLM to talk to — clients hide the
+// AI-edit button when it doesn't (a dead button on unconfigured hosts)
+function isAgentConfigured(): boolean {
+  try {
+    resolveAgentConfig();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// List every artipod that holds playable media (newest first). Public and
+// read-only, like /api/featured — this is how uploads that nobody curated
+// (e.g. PulseCam arrivals) become discoverable in the client.
+app.get('/api/artipods', (_req, res) => {
+  const artipodsDir = join(__dirname, '../artipods');
+  if (!existsSync(artipodsDir)) {
+    return res.json({ artipods: [] });
+  }
+  const featuredList = getFeatured();
+  const artipods = readdirSync(artipodsDir, { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .flatMap((entry) => {
+      const id = entry.name;
+      const artipodPath = join(artipodsDir, id);
+      const mediaFile = findMediaInArtipod(artipodPath);
+      if (!mediaFile) return [];
+      let stats;
+      try {
+        stats = statSync(join(artipodPath, mediaFile));
+      } catch {
+        return [];
+      }
+      const thumbnailFile = ['thumbnail.png', 'thumbnail.jpg'].find((f) =>
+        existsSync(join(artipodPath, f))
+      );
+      const featured = featuredList.find((f) => f.artipodId === id);
+      return [
+        {
+          artipodId: id,
+          filename: mediaFile,
+          url: `/artipods/${id}/${mediaFile}`,
+          size: stats.size,
+          uploadedAt: stats.mtime.toISOString(),
+          thumbnail:
+            featured?.thumbnail ??
+            (thumbnailFile ? `/artipods/${id}/${thumbnailFile}` : undefined),
+          featured: Boolean(featured),
+          title: featured?.title,
+        },
+      ];
+    })
+    .sort((a, b) => b.uploadedAt.localeCompare(a.uploadedAt));
+  res.json({ artipods });
 });
 
 // Get available providers

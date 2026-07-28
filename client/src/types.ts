@@ -38,3 +38,15 @@ export interface FeaturedPulse {
   thumbnail?: string;
   addedAt: string;
 }
+
+/** One row of GET /api/artipods — every artipod with playable media */
+export interface ArtipodListItem {
+  artipodId: string;
+  filename: string;
+  url: string;
+  size: number;
+  uploadedAt: string;
+  thumbnail?: string;
+  featured: boolean;
+  title?: string;
+}
