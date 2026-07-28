@@ -54,7 +54,7 @@ function FeaturedPulseCard({ pulse, onOpen }: { pulse: FeaturedPulse; onOpen: ()
   return (
     <a
       href={`/artipod/${pulse.artipodId}`}
-      className="block w-56 no-underline"
+      className="block w-40 shrink-0 no-underline"
       onClick={(e) => {
         e.preventDefault();
         onOpen();
@@ -62,9 +62,15 @@ function FeaturedPulseCard({ pulse, onOpen }: { pulse: FeaturedPulse; onOpen: ()
     >
       <Card interactive padding="none" className="overflow-hidden">
         {showThumb ? (
-          <CardMedia src={pulse.thumbnail} alt="" aspectRatio="video" onError={() => setThumbFailed(true)} />
+          <CardMedia
+            src={pulse.thumbnail}
+            alt=""
+            aspectRatio="auto"
+            className="aspect-[2/3]"
+            onError={() => setThumbFailed(true)}
+          />
         ) : (
-          <div className="flex aspect-video items-center justify-center bg-muted">
+          <div className="flex aspect-[2/3] items-center justify-center bg-muted">
             <Film className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
           </div>
         )}
@@ -1213,7 +1219,13 @@ function App() {
                   return (
                     <div className="mt-4 flex flex-col items-center gap-4">
                       {showAllPulses && (
-                        <div className="flex flex-wrap justify-center gap-4">
+                        <div
+                          className={
+                            morePulses.length > 8
+                              ? 'flex w-full gap-4 overflow-x-auto pb-2'
+                              : 'flex flex-wrap justify-center gap-4'
+                          }
+                        >
                           {morePulses.map((p) => (
                             <FeaturedPulseCard
                               key={p.artipodId}
@@ -1241,9 +1253,7 @@ function App() {
                         onClick={() => setShowAllPulses((v) => !v)}
                         aria-expanded={showAllPulses}
                       >
-                        {showAllPulses
-                          ? 'Show fewer'
-                          : `Show all uploads (${morePulses.length})`}
+                        {showAllPulses ? 'Hide' : `Show all (${morePulses.length})`}
                       </Button>
                     </div>
                   );
