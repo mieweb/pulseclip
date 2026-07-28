@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import multer from 'multer';
 import { randomUUID, createHash } from 'crypto';
+import { execFile } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'fs';
@@ -171,6 +172,25 @@ app.get('/api/about', async (_req, res) => {
   }
 });
 
+// Grab a poster frame for artipods that arrived without one (browser
+// uploads have no client-side capture). Async and best-effort: failures
+// (audio files, corrupt media) just leave the artipod imageless.
+function ensureThumbnail(artipodPath: string, mediaFile: string): void {
+  if (
+    existsSync(join(artipodPath, 'thumbnail.png')) ||
+    existsSync(join(artipodPath, 'thumbnail.jpg'))
+  ) {
+    return;
+  }
+  execFile(
+    'ffmpeg',
+    ['-y', '-ss', '1', '-i', join(artipodPath, mediaFile), '-frames:v', '1', '-vf', 'scale=480:-2', join(artipodPath, 'thumbnail.jpg')],
+    (err) => {
+      if (err) console.warn(`[THUMB] no poster for ${mediaFile}: frame grab failed`);
+    }
+  );
+}
+
 // Whether the editorial agent has an LLM to talk to — clients hide the
 // AI-edit button when it doesn't (a dead button on unconfigured hosts)
 function isAgentConfigured(): boolean {
@@ -299,7 +319,11 @@ app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
   
   // Register the new checksum
   registerChecksum(checksum, artipodId, req.file.originalname);
-  
+
+  // Best-effort poster so the upload gets a card image (fire-and-forget;
+  // audio-only files simply fail the frame grab and stay imageless)
+  ensureThumbnail(join(__dirname, '../artipods', artipodId), req.file.originalname);
+
   const fileUrl = `/artipods/${artipodId}/${req.file.originalname}`;
 
   res.json({
