@@ -24,18 +24,22 @@ HEALTH_PATH=${HEALTH_PATH:-/api/providers}
 NAME=$(basename "$TARBALL" .tar.gz)
 REL="$RELEASES/$NAME"
 
-mkdir -p "$RELEASES" "$SHARED/artipods" "$SHARED/cache" "$SHARED/data" "$SHARED/tus-uploads"
+mkdir -p "$RELEASES" "$SHARED/artipods" "$SHARED/cache" "$SHARED/data" "$SHARED/tus-uploads" "$SHARED/vault-data"
 rm -rf "$REL"
 mkdir -p "$REL"
 tar -xzf "$TARBALL" -C "$REL"
 
 # Shared state survives deploys; releases are disposable.
 # cache/ = transcription cache, data/ = upload checksum index,
-# tus-uploads/ = in-flight resumable uploads — all served from server/ cwd.
+# tus-uploads/ = in-flight resumable uploads,
+# vault-data/ = pulsevault artifact store (bytes + sidecars + in-flight
+# TUS state; losing it 404s /pulsevault/artifacts links and breaks
+# resume across deploys) — all served from server/ cwd.
 ln -sfn "$SHARED/artipods" "$REL/server/artipods"
 ln -sfn "$SHARED/cache" "$REL/server/cache"
 ln -sfn "$SHARED/data" "$REL/server/data"
 ln -sfn "$SHARED/tus-uploads" "$REL/server/tus-uploads"
+ln -sfn "$SHARED/vault-data" "$REL/server/vault-data"
 if [ -f "$SHARED/env" ]; then
   ln -sf "$SHARED/env" "$REL/server/.env"
 fi
