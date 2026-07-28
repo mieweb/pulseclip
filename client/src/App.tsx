@@ -1241,7 +1241,7 @@ function App() {
           </nav>
         </header>
 
-        <main className="mx-auto w-full max-w-5xl px-6 py-10">
+        <main className="mx-auto w-full px-6 py-10 xl:px-12">
           <div className="flex flex-col gap-12">
             {/* Featured pulses - prominent, with the rest of the library behind Show all */}
             {(featuredPulses.length > 0 || allPulses.length > 0) && (
