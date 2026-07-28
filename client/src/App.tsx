@@ -1164,7 +1164,11 @@ function App() {
         
         {/* Sticky header banner */}
         <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
-          <div className="flex items-baseline gap-3">
+          {/* items-center, not items-baseline: the h1 is a flex row whose
+              first item is an SVG icon, and a flex container's baseline is
+              its first item's — an SVG baseline is its bottom edge, which
+              dragged the tagline ~6px below the title's real text baseline */}
+          <div className="flex items-center gap-3">
             <h1 className="m-0 flex items-center gap-2 text-lg font-semibold text-foreground">
               <AudioLines className="h-5 w-5 shrink-0 self-center text-primary-800 dark:text-primary-400" aria-hidden="true" />
               PulseClip
