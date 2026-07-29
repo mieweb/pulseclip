@@ -62,6 +62,29 @@ interface AgentJob {
 }
 const agentJobs = new Map<string, AgentJob>();
 
+/**
+ * Heavy media work (ffmpeg renders, Whisper) runs one job at a time.
+ * A single 40-segment render peaks near 2 GB and Whisper's larger models
+ * want over 1 GB; the box has 4 GB, so two at once OOM-kill the server and
+ * take every other user's work with them. Serializing trades a queue wait
+ * for never losing the process. Failures release the lock like successes.
+ */
+let heavyJobChain: Promise<unknown> = Promise.resolve();
+function runHeavyJob<T>(label: string, fn: () => Promise<T>): Promise<T> {
+  const started = heavyJobChain.then(
+    () => {
+      console.log(`[queue] running ${label}`);
+      return fn();
+    },
+    () => {
+      console.log(`[queue] running ${label}`);
+      return fn();
+    }
+  );
+  heavyJobChain = started.catch(() => {});
+  return started;
+}
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -414,8 +437,9 @@ app.post('/api/transcribe', async (req, res) => {
       console.log(`Large file (${(fileSize / 1024 / 1024).toFixed(1)}MB) - starting async transcription job ${jobId}`);
       console.log(`Using local file: ${localPath}`);
 
-      // Fire and forget - transcription runs in background
-      provider.transcribe(localPath, options).then(async (result) => {
+      // Fire and forget - transcription runs in background, queued behind
+      // any other heavy job so concurrent uploads can't exhaust memory
+      runHeavyJob(`transcribe ${providerId}`, () => provider.transcribe(localPath, options)).then(async (result) => {
         console.log(`Async transcription complete for job ${jobId}. Words: ${result.normalized.words.length}`);
         await cacheTranscription(localPath, providerId, result);
         transcriptionJobs.set(jobId, {
@@ -450,7 +474,9 @@ app.post('/api/transcribe', async (req, res) => {
 
     console.log(`Starting transcription with ${provider.displayName}...`);
     console.log(`Using local file: ${localPath}`);
-    const result = await provider.transcribe(localPath, options);
+    const result = await runHeavyJob(`transcribe ${providerId}`, () =>
+      provider.transcribe(localPath, options)
+    );
     console.log(`Transcription complete. Words: ${result.normalized.words.length}`);
 
     // Cache the result
@@ -875,7 +901,9 @@ app.post('/api/artipod/:artipodId/export', async (req, res) => {
     `${burn ? ', captions burned' : ''}`
   );
 
-  renderExport(join(artipodPath, mediaFile), artipodPath, plan, burn ? srtPath : null, lowerThird)
+  runHeavyJob(`export ${jobId}`, () =>
+    renderExport(join(artipodPath, mediaFile), artipodPath, plan, burn ? srtPath : null, lowerThird)
+  )
     .then(({ filename, durationMs }) => {
       exportJobs.set(jobId, {
         id: jobId,
