@@ -1408,13 +1408,15 @@ function App() {
                   </option>
                 ))}
               </select>
-              <button
-                className="app__transcribe-btn"
+              <Button
+                size="sm"
                 onClick={() => handleTranscribe(false)}
                 disabled={!selectedProvider}
+                isLoading={transcribing || transcribingAsync}
+                loadingText="Transcribing…"
               >
                 Transcribe
-              </button>
+              </Button>
             </>
           )}
 
