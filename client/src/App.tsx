@@ -137,6 +137,10 @@ function App() {
   const [agentAvailable, setAgentAvailable] = useState(false);
   const [isCurrentPulseFeatured, setIsCurrentPulseFeatured] = useState(false);
   const [showFeaturedModal, setShowFeaturedModal] = useState(false);
+  // Display title of the open pulse, and the rename dialog's draft value
+  const [pulseTitle, setPulseTitle] = useState('');
+  const [showRenameModal, setShowRenameModal] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
   const [featuredTitle, setFeaturedTitle] = useState('');
   const [featuredThumbnail, setFeaturedThumbnail] = useState('');
   const [splitPosition, setSplitPosition] = useState(50); // Percentage for media pane height
@@ -295,6 +299,7 @@ function App() {
           setMediaUrl(data.url);
           setArtipodId(data.artipodId);
           setMediaFilename(data.filename);
+          setPulseTitle(data.title || '');
         })
         .catch((err) => {
           console.error('Failed to load artipod:', err);
@@ -1094,6 +1099,59 @@ function App() {
   );
 
   // Render Featured Modal
+  const handleRenameSubmit = async () => {
+    const title = renameValue.trim();
+    if (!title || !artipodId) return;
+    try {
+      const response = await fetch(`/api/artipod/${artipodId}/title`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ title }),
+      });
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || 'Rename failed');
+      }
+      setPulseTitle(title);
+      setShowRenameModal(false);
+      // Refresh the homepage listing so the card picks the new title up
+      fetch('/api/artipods')
+        .then((res) => res.json())
+        .then((data) => setAllPulses(data.artipods || []))
+        .catch(() => {});
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Rename failed');
+    }
+  };
+
+  const renderRenameModal = () => (
+    <Modal open={showRenameModal} onOpenChange={(open) => !open && setShowRenameModal(false)} size="sm">
+      <ModalHeader>
+        <ModalTitle>Rename pulse</ModalTitle>
+        <ModalClose />
+      </ModalHeader>
+      <ModalBody>
+        <Input
+          type="text"
+          label="Title"
+          value={renameValue}
+          onChange={(e) => setRenameValue(e.target.value)}
+          placeholder="Give this pulse a name"
+          onKeyDown={(e) => e.key === 'Enter' && handleRenameSubmit()}
+          autoFocus
+        />
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="secondary" size="sm" onClick={() => setShowRenameModal(false)}>
+          Cancel
+        </Button>
+        <Button size="sm" onClick={handleRenameSubmit} disabled={!renameValue.trim()}>
+          Save
+        </Button>
+      </ModalFooter>
+    </Modal>
+  );
+
   const renderFeaturedModal = () => (
     <Modal open={showFeaturedModal} onOpenChange={(open) => !open && setShowFeaturedModal(false)} size="sm">
       <ModalHeader>
@@ -1163,6 +1221,7 @@ function App() {
       <div className="app app--upload">
         {renderApiKeyModal()}
         {renderFeaturedModal()}
+      {renderRenameModal()}
         
         {/* Sticky header banner */}
         <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
@@ -1324,6 +1383,7 @@ function App() {
     <div className="app app--split">
       {renderApiKeyModal()}
       {renderFeaturedModal()}
+      {renderRenameModal()}
       {renderExportModal()}
       {/* Compact toolbar */}
       <header className="app__toolbar">
@@ -1336,7 +1396,7 @@ function App() {
             ☰
           </button>
           <span className="app__filename" title={mediaFilename}>
-            {mediaFilename}
+            {pulseTitle || mediaFilename}
           </span>
           {versionInfo?.commitHash && (
             (() => {
@@ -1537,9 +1597,21 @@ function App() {
                   </button>
                 </>
               ) : (
-                <button className="app__menu-item" onClick={handleToggleFeatured}>
-                  ⭐ Mark as Featured
-                </button>
+                <>
+                  <button
+                    className="app__menu-item"
+                    onClick={() => {
+                      setRenameValue(pulseTitle || '');
+                      setShowRenameModal(true);
+                      setMenuOpen(false);
+                    }}
+                  >
+                    ✏️ Rename Pulse
+                  </button>
+                  <button className="app__menu-item" onClick={handleToggleFeatured}>
+                    ⭐ Mark as Featured
+                  </button>
+                </>
               )}
               <button className="app__menu-item app__menu-item--danger" onClick={handleDeletePulse}>
                 🗑️ Delete Pulse

@@ -687,7 +687,33 @@ app.get('/api/artipod/:artipodId', (req, res) => {
     localPath: mediaPath,
     size: stats.size,
     thumbnail: thumbnailUrl,
+    title: getFeatured().find((f) => f.artipodId === artipodId)?.title ?? readArtipodTitle(artipodPath),
   });
+});
+
+// Rename a pulse. Open tier: anyone can title the video they just uploaded
+// (they only ever see their own on the homepage). Featured pulses are named
+// through the featured dialog instead, so the curated shelf can't be edited
+// by visitors.
+app.put('/api/artipod/:artipodId/title', (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+  if (!existsSync(artipodPath) || !findMediaInArtipod(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+  if (getFeatured().some((f) => f.artipodId === artipodId)) {
+    return res.status(409).json({
+      error: 'Featured pulses are renamed from the featured dialog',
+    });
+  }
+  const raw = typeof req.body?.title === 'string' ? req.body.title : '';
+  // eslint-disable-next-line no-control-regex
+  const title = raw.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 120);
+  if (!title) {
+    return res.status(400).json({ error: 'title is required' });
+  }
+  writeFileSync(join(artipodPath, '.title'), title);
+  res.json({ success: true, artipodId, title });
 });
 
 // Get editor state (edits and undo history) for an artipod
