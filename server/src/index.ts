@@ -204,6 +204,17 @@ function isAgentConfigured(): boolean {
   }
 }
 
+// Display title for an artipod that isn't featured: PulseCam uploads carry
+// the draft's name (written as a .title dot-file by the pulsevault bridge)
+function readArtipodTitle(artipodPath: string): string | undefined {
+  try {
+    const title = readFileSync(join(artipodPath, '.title'), 'utf-8').trim();
+    return title || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 // List every artipod that holds playable media (newest first). Public and
 // read-only, like /api/featured — this is how uploads that nobody curated
 // (e.g. PulseCam arrivals) become discoverable in the client.
@@ -241,7 +252,7 @@ app.get('/api/artipods', (_req, res) => {
             featured?.thumbnail ??
             (thumbnailFile ? `/artipods/${id}/${thumbnailFile}` : undefined),
           featured: Boolean(featured),
-          title: featured?.title,
+          title: featured?.title ?? readArtipodTitle(artipodPath),
         },
       ];
     })

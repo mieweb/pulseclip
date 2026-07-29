@@ -1,6 +1,6 @@
 import { fileURLToPath } from 'url';
 import { dirname, join, basename } from 'path';
-import { copyFileSync, mkdirSync, readFileSync, existsSync } from 'fs';
+import { copyFileSync, mkdirSync, readFileSync, writeFileSync, existsSync } from 'fs';
 import { randomUUID } from 'crypto';
 import {
   createPulseVaultCore,
@@ -26,6 +26,32 @@ const TOKEN_TTL_SECONDS = 30 * 60;
 const secret = process.env.PULSEVAULT_SECRET || '';
 
 const storage = createLocalStorage({ workspaceDir: VAULT_DATA_DIR });
+
+/**
+ * Display titles: newer Pulse app builds send the draft's name as a `name`
+ * Upload-Metadata key (pulsevault #56 / pulse #134). It arrives on the TUS
+ * create POST, but the artipod only exists at completion — so stash it here
+ * between the two, then write it as a dot-file the media scan ignores.
+ */
+const pendingTitles = new Map<string, string>();
+
+function decodeMetadataName(header: unknown): string | null {
+  if (typeof header !== 'string' || !header) return null;
+  for (const pair of header.split(',')) {
+    const [key, value] = pair.trim().split(/\s+/);
+    if (key === 'name' && value) {
+      try {
+        const decoded = Buffer.from(value, 'base64').toString('utf8').trim();
+        // eslint-disable-next-line no-control-regex
+        const clean = decoded.replace(/[\u0000-\u001f\u007f]/g, '').slice(0, 120);
+        return clean || null;
+      } catch {
+        return null;
+      }
+    }
+  }
+  return null;
+}
 
 /** Sidecar shape from pulsevault's documented stable filesystem contract */
 interface VaultSidecar {
@@ -65,8 +91,13 @@ async function handleUploadComplete(
     mkdirSync(artipodPath, { recursive: true });
     const filename = basename(sidecar?.filename || `video${ext}`);
     copyFileSync(src, join(artipodPath, filename));
+    const title = pendingTitles.get(ctx.artifactId);
+    pendingTitles.delete(ctx.artifactId);
+    if (title) {
+      writeFileSync(join(artipodPath, '.title'), title);
+    }
     console.log(
-      `[VAULT] video ${ctx.artifactId} -> artipod ${ctx.artifactId} (${filename}, ${ctx.size} bytes)`
+      `[VAULT] video ${ctx.artifactId} -> artipod ${ctx.artifactId} (${filename}, ${ctx.size} bytes${title ? `, title "${title}"` : ''})`
     );
     return;
   }
@@ -96,6 +127,12 @@ async function handleUploadComplete(
 
 const sniffVideo = createMp4Sniffer(storage);
 
+const capabilityAuthorize = secret
+  ? createCapabilityAuthorize((kid: string) => (kid === KEY_ID ? secret : null), {
+      issuer: ISSUER,
+    })
+  : null;
+
 export const pulseVault = createPulseVaultCore({
   basePath: '/pulsevault',
   // Express's app.use('/pulsevault', ...) strips the mount prefix from
@@ -112,13 +149,17 @@ export const pulseVault = createPulseVaultCore({
     captions: ['.vtt'],
     thumbnail: ['.jpg', '.jpeg', '.png'],
   },
-  ...(secret
-    ? {
-        authorize: createCapabilityAuthorize((kid: string) => (kid === KEY_ID ? secret : null), {
-          issuer: ISSUER,
-        }),
-      }
-    : {}),
+  // Always present: captures the draft name from create-POST metadata, then
+  // defers to capability-token verification when the lane is locked
+  authorize: async (request, ctx) => {
+    if (ctx.phase === 'create') {
+      const name = decodeMetadataName(
+        (request as { headers?: Record<string, unknown> }).headers?.['upload-metadata']
+      );
+      if (name) pendingTitles.set(ctx.artifactId, name);
+    }
+    if (capabilityAuthorize) return capabilityAuthorize(request, ctx);
+  },
   validatePayload: async (req, ctx) => {
     if (ctx.kind === 'video') return sniffVideo(req, ctx);
   },
