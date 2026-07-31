@@ -46,8 +46,15 @@ export interface EditableWord {
 const MIN_SILENCE_MS = 400;
 const NL_SILENCE_MS = 1500;
 
-/** Cap deletions at half the spoken words — a conservative bound against over-cutting */
+/**
+ * Bound on how much the agent may cut. The default pass is conservative — it is
+ * only removing disfluencies, so needing more than half the words means
+ * something went wrong. A directed edit ("cut this to 60 seconds") legitimately
+ * removes far more, so it gets a looser rail that still catches a model that
+ * returns every index.
+ */
 const MAX_DELETE_FRACTION = 0.5;
+const DIRECTED_MAX_DELETE_FRACTION = 0.9;
 
 const isSilence = (wordType?: string): boolean =>
   wordType === 'silence' || wordType === 'silence-newline';
@@ -146,7 +153,7 @@ export function resolveAgentConfig(): AgentConfig {
       provider: 'anthropic',
       base: (process.env.AGENT_API_BASE || 'https://api.anthropic.com').replace(/\/+$/, ''),
       apiKey,
-      model: process.env.AGENT_MODEL || 'claude-opus-4-8',
+      model: process.env.AGENT_MODEL || 'claude-opus-5',
     };
   }
 
@@ -169,15 +176,36 @@ export function resolveAgentConfig(): AgentConfig {
 // a couple of minutes.
 const LLM_TIMEOUT_MS = 120 * 1000;
 
-const SYSTEM_PROMPT =
+const BASE_PROMPT =
   'You are a meticulous video editor tightening the spoken track of a short product-demo video. ' +
-  'You receive the transcript as a numbered list of words. Decide which words to DELETE so the ' +
-  'delivery is tighter and more professional. Delete ONLY: filler words (um, uh, er, like, ' +
-  'you know, I mean, sort of), false starts and self-corrections, verbatim repeated words or ' +
-  'phrases, and clearly redundant restatements. NEVER delete words that carry meaning, and never ' +
-  'leave a dangling or ungrammatical fragment. When unsure, KEEP the word — under-editing is far ' +
-  'better than cutting real content. Deleting nothing is a valid answer. ' +
+  'You receive the transcript as a numbered list of words. Decide which words to DELETE. ' +
+  'The result is a cut of the original recording, so you can only remove words — you cannot ' +
+  'add or reorder them. Never leave a dangling or ungrammatical fragment: cut whole phrases ' +
+  'rather than stranding half of one. ' +
   'Respond with ONLY a JSON object, no prose, no code fences.';
+
+/** Default pass: no direction given, so only disfluencies come out. */
+const CLEANUP_PROMPT =
+  ' Delete ONLY: filler words (um, uh, er, like, you know, I mean, sort of), false starts and ' +
+  'self-corrections, verbatim repeated words or phrases, and clearly redundant restatements. ' +
+  'NEVER delete words that carry meaning. When unsure, KEEP the word — under-editing is far ' +
+  'better than cutting real content. Deleting nothing is a valid answer.';
+
+/**
+ * Directed pass: the person asked for something specific. Their instruction
+ * outranks the conservative default — "cut this to 60 seconds" or "drop the
+ * part about pricing" REQUIRES removing meaningful content, so the cleanup
+ * rule above would sabotage it.
+ */
+const DIRECTED_PROMPT =
+  " The editor's instructions are the goal and take priority: follow them even when doing so " +
+  'means cutting substantive content. Still remove obvious fillers and false starts along the ' +
+  'way, and keep what remains coherent and worth watching on its own. If the instructions ask ' +
+  'for a target length, estimate from the timestamps that roughly 150 spoken words run one ' +
+  'minute. If they are ambiguous, choose the most useful reading and proceed.';
+
+const buildSystemPrompt = (hasInstructions: boolean): string =>
+  BASE_PROMPT + (hasInstructions ? DIRECTED_PROMPT : CLEANUP_PROMPT);
 
 interface NumberedWord {
   /** Sequential index shown to the LLM */
@@ -187,11 +215,23 @@ interface NumberedWord {
   text: string;
 }
 
-function buildUserPrompt(content: NumberedWord[], instructions?: string): string {
+function buildUserPrompt(
+  content: NumberedWord[],
+  cap: number,
+  spokenMs: number,
+  instructions?: string
+): string {
   const list = content.map((w) => `${w.num}: ${w.text}`).join('\n');
   const lines: string[] = [];
   if (instructions && instructions.trim()) {
     lines.push(`Editor's instructions: ${instructions.trim()}`, '');
+  }
+  if (spokenMs > 0) {
+    lines.push(
+      `The recording currently runs about ${Math.round(spokenMs / 1000)} seconds ` +
+        `across ${content.length} spoken words.`,
+      ''
+    );
   }
   lines.push(
     'Transcript words (index: word):',
@@ -199,7 +239,7 @@ function buildUserPrompt(content: NumberedWord[], instructions?: string): string
     '',
     'Return JSON of exactly this shape:',
     '{"delete": [<integers, the indices of words to delete>], "summary": "<one short sentence describing what you cut>"}',
-    `Delete at most ${Math.floor(content.length * MAX_DELETE_FRACTION)} words. If nothing should be cut, return an empty "delete" array.`
+    `Delete at most ${cap} words. If nothing should be cut, return an empty "delete" array.`
   );
   return lines.join('\n');
 }
@@ -344,7 +384,17 @@ export async function generateAgentEdit(opts: {
     };
   }
 
-  const raw = await callLLM(config, SYSTEM_PROMPT, buildUserPrompt(content, instructions));
+  const directed = Boolean(instructions && instructions.trim());
+  const cap = Math.floor(
+    content.length * (directed ? DIRECTED_MAX_DELETE_FRACTION : MAX_DELETE_FRACTION)
+  );
+  const spokenMs = Math.max(0, words[words.length - 1].endMs - words[0].startMs);
+
+  const raw = await callLLM(
+    config,
+    buildSystemPrompt(directed),
+    buildUserPrompt(content, cap, spokenMs, instructions)
+  );
 
   let parsed: any;
   try {
@@ -353,8 +403,7 @@ export async function generateAgentEdit(opts: {
     throw new Error(`Could not parse the agent's response as JSON: ${(err as Error).message}`);
   }
 
-  // Validate: in-range unique integers, capped at half the spoken words
-  const cap = Math.floor(content.length * MAX_DELETE_FRACTION);
+  // Validate: in-range unique integers, within the cap chosen above
   const seen = new Set<number>();
   const rawDelete: unknown[] = Array.isArray(parsed?.delete) ? parsed.delete : [];
   const chosen: number[] = [];
@@ -366,7 +415,9 @@ export async function generateAgentEdit(opts: {
   }
   chosen.sort((a, b) => a - b);
   if (chosen.length > cap) {
-    console.warn(`Agent proposed ${chosen.length} deletions; capping to ${cap} (50% of ${content.length} words)`);
+    console.warn(
+      `Agent proposed ${chosen.length} deletions; capping to ${cap} of ${content.length} spoken words`
+    );
     chosen.length = cap;
   }
 

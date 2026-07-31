@@ -9,6 +9,7 @@ import { Card, CardContent, CardMedia } from '@mieweb/ui/components/Card';
 import { Button } from '@mieweb/ui/components/Button';
 import { Alert } from '@mieweb/ui/components/Alert';
 import { Input } from '@mieweb/ui/components/Input';
+import { Textarea } from '@mieweb/ui/components/Textarea';
 import { Checkbox } from '@mieweb/ui/components/Checkbox';
 import { Modal, ModalHeader, ModalTitle, ModalClose, ModalBody, ModalFooter } from '@mieweb/ui/components/Modal';
 import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
@@ -118,6 +119,10 @@ function App() {
   // agent writes a new proposal (initialEditedWords only applies on mount)
   const [agentStatus, setAgentStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [editorEpoch, setEditorEpoch] = useState(0);
+  // Optional plain-English direction for the agent; blank falls back to the
+  // default pass (fillers, false starts, repeats, silences)
+  const [showAgentModal, setShowAgentModal] = useState(false);
+  const [agentInstructions, setAgentInstructions] = useState('');
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportName, setExportName] = useState('');
   const [exportCaptions, setExportCaptions] = useState(false);
@@ -885,10 +890,22 @@ function App() {
     handleExport(exportName);
   };
 
-  // AI edit: an LLM proposes content cuts (fillers, false starts, repeats)
-  // server-side, saved as a reviewable proposal. Poll, then reload the edits
-  // and remount the editor so the strikethroughs — and a one-step ⌘Z — appear.
-  const handleAgentEdit = async () => {
+  const openAgentModal = () => {
+    if (agentStatus === 'running') return;
+    setShowAgentModal(true);
+  };
+
+  const handleAgentConfirm = () => {
+    setShowAgentModal(false);
+    handleAgentEdit(agentInstructions);
+  };
+
+  // AI edit: an LLM proposes content cuts server-side, saved as a reviewable
+  // proposal. Without instructions it clears fillers, false starts, and
+  // repeats; with them it edits to whatever the person asked for. Poll, then
+  // reload the edits and remount the editor so the strikethroughs — and a
+  // one-step ⌘Z — appear.
+  const handleAgentEdit = async (instructions?: string) => {
     if (!artipodId || agentStatus === 'running') return;
     const words = transcriptionResult?.transcript?.words;
     if (!words || words.length === 0) return;
@@ -902,7 +919,9 @@ function App() {
           'Content-Type': 'application/json',
           'X-API-Key': apiKey,
         },
-        body: JSON.stringify({ words }),
+        body: JSON.stringify(
+          instructions?.trim() ? { words, instructions: instructions.trim() } : { words }
+        ),
       });
 
       if (response.status === 401) {
@@ -964,6 +983,37 @@ function App() {
     setShowApiKeyModal(false);
     setPendingApiKey('');
   };
+
+  const renderAgentModal = () => (
+    <Modal open={showAgentModal} onOpenChange={(open) => !open && setShowAgentModal(false)} size="sm">
+      <ModalHeader>
+        <ModalTitle>AI Edit</ModalTitle>
+        <ModalClose />
+      </ModalHeader>
+      <ModalBody>
+        <div className="flex flex-col gap-3">
+          <p className="m-0 text-sm text-muted-foreground">
+            The AI proposes cuts in the editor for you to review. Nothing is exported,
+            and ⌘Z undoes the whole proposal.
+          </p>
+          <Textarea
+            label="What should it do? (optional)"
+            value={agentInstructions}
+            onChange={(e) => setAgentInstructions(e.target.value)}
+            placeholder="e.g. cut this down to 60 seconds and drop the tangent about pricing"
+            helperText="Leave blank to just clean up fillers, false starts, repeats, and dead air."
+            rows={3}
+          />
+        </div>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={() => setShowAgentModal(false)}>
+          Cancel
+        </Button>
+        <Button onClick={handleAgentConfirm}>✨ AI edit</Button>
+      </ModalFooter>
+    </Modal>
+  );
 
   // Render API Key Modal
   const renderExportModal = () => (
@@ -1224,6 +1274,7 @@ function App() {
       {renderApiKeyModal()}
       {renderFeaturedModal()}
       {renderExportModal()}
+      {renderAgentModal()}
       {/* Compact toolbar */}
       <header className="app__toolbar">
         <div className="app__toolbar-left">
@@ -1344,10 +1395,10 @@ function App() {
               <Button
                 size="sm"
                 variant="secondary"
-                onClick={handleAgentEdit}
+                onClick={openAgentModal}
                 isLoading={agentStatus === 'running'}
                 loadingText="AI editing…"
-                title="Let AI propose cuts (fillers, false starts, repeats) for you to review"
+                title="Tell the AI what to cut, or let it clean up fillers and dead air"
                 aria-label="AI edit transcript"
               >
                 {agentStatus === 'success' ? 'AI edited ✓' :
