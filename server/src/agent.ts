@@ -196,6 +196,13 @@ export function resolveAgentConfig(): AgentConfig {
 const LLM_TIMEOUT_MS = 120 * 1000;
 
 /**
+ * Output ceiling for Anthropic models. It has to cover thinking as well as the
+ * answer — models from Sonnet 5 onward think by default and bill it as output —
+ * so it is sized well above the JSON an op list actually needs.
+ */
+const ANTHROPIC_MAX_TOKENS = 8192;
+
+/**
  * The agent edits by issuing the same operations a person performs in the
  * editor. Ranges are inclusive and every index refers to the ORIGINAL numbering
  * shown in the prompt — ops never renumber for each other, so the model does not
@@ -283,7 +290,10 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
         },
         body: JSON.stringify({
           model: config.model,
-          max_tokens: 2048,
+          // Current Claude models think by default, and thinking is billed and
+          // budgeted as output. A ceiling sized for the JSON alone gets spent
+          // reasoning, and the response comes back with no text block at all.
+          max_tokens: ANTHROPIC_MAX_TOKENS,
           system: systemPrompt,
           messages: [{ role: 'user', content: userPrompt }],
         }),
@@ -296,7 +306,14 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
       const text = Array.isArray(data.content)
         ? data.content.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('')
         : '';
-      if (!text) throw new Error('Anthropic API returned no text content');
+      if (!text) {
+        throw new Error(
+          data?.stop_reason === 'max_tokens'
+            ? `${config.model} used its entire ${ANTHROPIC_MAX_TOKENS}-token budget before answering. ` +
+              'Try a shorter transcript or a simpler instruction.'
+            : `${config.model} returned no text (stop_reason: ${data?.stop_reason ?? 'unknown'}).`
+        );
+      }
       return text;
     }
 
