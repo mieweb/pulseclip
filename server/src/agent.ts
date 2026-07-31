@@ -56,6 +56,29 @@ const NL_SILENCE_MS = 1500;
 const MAX_DELETE_FRACTION = 0.5;
 const DIRECTED_MAX_DELETE_FRACTION = 0.9;
 
+/**
+ * Longest unbroken run of deleted words tolerated on a cleanup pass. Fillers and
+ * false starts come out in ones and twos; even a rambling self-correction is a
+ * handful. Fifteen consecutive words is a sentence or two of real speech, which
+ * a pass told to remove only disfluencies should never produce. A DIRECTED pass
+ * is exempt — "drop the part about pricing" is *supposed* to cut one long block.
+ */
+const DEGENERATE_RUN_WORDS = 15;
+
+/** Share of deletions in a single run that marks an over-cap response as a runaway */
+const SINGLE_BLOCK_FRACTION = 0.9;
+
+/** Length of the longest consecutive run in a sorted, deduped index list */
+function longestRunLength(sorted: number[]): number {
+  let longest = 0;
+  let run = 0;
+  for (let i = 0; i < sorted.length; i++) {
+    run = i > 0 && sorted[i] === sorted[i - 1] + 1 ? run + 1 : 1;
+    if (run > longest) longest = run;
+  }
+  return longest;
+}
+
 const isSilence = (wordType?: string): boolean =>
   wordType === 'silence' || wordType === 'silence-newline';
 
@@ -414,6 +437,30 @@ export async function generateAgentEdit(opts: {
     chosen.push(n);
   }
   chosen.sort((a, b) => a - b);
+
+  // Shape check. A model that stops selecting and starts counting emits one
+  // unbroken run of indices — the deletions stop describing an edit and just
+  // describe a range. Truncating that to the cap doesn't rescue it, it just
+  // makes an arbitrary cut somewhere in the middle of a sentence, so fail loudly
+  // instead. See DEGENERATE_RUN_WORDS for why the two rules differ.
+  const runs = longestRunLength(chosen);
+  if (chosen.length > 0) {
+    const singleBlock = runs >= chosen.length * SINGLE_BLOCK_FRACTION;
+    if (!directed && runs >= DEGENERATE_RUN_WORDS) {
+      throw new Error(
+        `The agent returned ${runs} consecutive words to delete, which is a block of speech rather ` +
+          `than filler. Refusing the proposal — try again, or use a more capable model.`
+      );
+    }
+    if (chosen.length > cap && singleBlock) {
+      throw new Error(
+        `The agent asked to delete ${chosen.length} of ${content.length} words as one unbroken run, ` +
+          `past the ${cap}-word limit. That is a runaway response, not an edit. Refusing the ` +
+          `proposal — try again, or use a more capable model.`
+      );
+    }
+  }
+
   if (chosen.length > cap) {
     console.warn(
       `Agent proposed ${chosen.length} deletions; capping to ${cap} of ${content.length} spoken words`
