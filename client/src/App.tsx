@@ -23,6 +23,14 @@ import './App.scss';
 
 type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
 
+/** One entry in the agent's edit history, as persisted in edits.json */
+interface AgentCheckpoint {
+  at: string;
+  /** The instruction that produced this state, or "Original" for the baseline */
+  label: string;
+  summary?: string;
+}
+
 /** Saved editor state from server */
 interface SavedEditorState {
   editedWords: EditableWord[];
@@ -119,10 +127,14 @@ function App() {
   // agent writes a new proposal (initialEditedWords only applies on mount)
   const [agentStatus, setAgentStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [editorEpoch, setEditorEpoch] = useState(0);
-  // Optional plain-English direction for the agent; blank falls back to the
-  // default pass (fillers, false starts, repeats, silences)
+  // What the agent should do, and the history of what it has done. Each agent
+  // run checkpoints the complete edit state so a run can be rolled back by name
+  // rather than by counting ⌘Z presses.
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [agentInstructions, setAgentInstructions] = useState('');
+  const [checkpoints, setCheckpoints] = useState<AgentCheckpoint[]>([]);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [restoringIndex, setRestoringIndex] = useState<number | null>(null);
   const [showExportModal, setShowExportModal] = useState(false);
   const [exportName, setExportName] = useState('');
   const [exportCaptions, setExportCaptions] = useState(false);
@@ -275,6 +287,7 @@ function App() {
     fetch(`/api/artipod/${artipodId}/edits`)
       .then((res) => res.json())
       .then((data) => {
+        setCheckpoints(Array.isArray(data.checkpoints) ? data.checkpoints : []);
         if (data.hasEdits && data.editedWords) {
           console.log(`Loaded saved edits for artipod ${artipodId}: ${data.editedWords.length} words, ${data.undoStack?.length || 0} undo states`);
           setSavedEditorState({
@@ -291,6 +304,7 @@ function App() {
       .catch((err) => {
         console.error('Failed to load saved edits:', err);
         setSavedEditorState(null);
+        setCheckpoints([]);
       })
       .finally(() => setEditsLoaded(true));
   }, [artipodId]);
@@ -896,14 +910,59 @@ function App() {
   };
 
   const handleAgentConfirm = () => {
+    if (!agentInstructions.trim()) return;
     setShowAgentModal(false);
     handleAgentEdit(agentInstructions);
   };
 
-  // AI edit: an LLM proposes content cuts server-side, saved as a reviewable
-  // proposal. Without instructions it clears fillers, false starts, and
-  // repeats; with them it edits to whatever the person asked for. Poll, then
-  // reload the edits and remount the editor so the strikethroughs — and a
+  /**
+   * Roll the edit state back to an earlier checkpoint. The history is not
+   * truncated, so a rollback is itself reversible.
+   */
+  const handleRestore = async (index: number) => {
+    if (!artipodId || restoringIndex !== null) return;
+    setRestoringIndex(index);
+    setError(null);
+    try {
+      const res = await fetch(`/api/artipod/${artipodId}/edits/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+        body: JSON.stringify({ index }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || data.error || 'Restore failed');
+      }
+      await reloadEdits();
+      setShowHistoryModal(false);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Restore failed');
+    } finally {
+      setRestoringIndex(null);
+    }
+  };
+
+  /** Pull the saved edit state back in and remount the editor to show it */
+  const reloadEdits = async () => {
+    if (!artipodId) return;
+    const editsRes = await fetch(`/api/artipod/${artipodId}/edits`);
+    const edits = await editsRes.json().catch(() => ({}));
+    setCheckpoints(Array.isArray(edits.checkpoints) ? edits.checkpoints : []);
+    if (edits.hasEdits && edits.editedWords) {
+      setSavedEditorState({
+        editedWords: edits.editedWords,
+        undoStack: edits.undoStack || [],
+        speedMarkers: edits.speedMarkers || [],
+        defaultSpeed: edits.defaultSpeed ?? 1,
+        savedAt: edits.savedAt,
+      });
+      setEditorEpoch((e) => e + 1);
+    }
+  };
+
+  // AI edit: the model returns an operation list (delete / speed / move) which
+  // the server validates and applies, saved as a reviewable proposal. Poll,
+  // then reload the edits and remount the editor so the proposal — and a
   // one-step ⌘Z — appear.
   const handleAgentEdit = async (instructions?: string) => {
     if (!artipodId || agentStatus === 'running') return;
@@ -945,18 +1004,7 @@ function App() {
 
         if (statusRes.ok && status.status === 'completed') {
           // Load the saved proposal and remount the editor to show it
-          const editsRes = await fetch(`/api/artipod/${artipodId}/edits`);
-          const edits = await editsRes.json().catch(() => ({}));
-          if (edits.hasEdits && edits.editedWords) {
-            setSavedEditorState({
-              editedWords: edits.editedWords,
-              undoStack: edits.undoStack || [],
-              speedMarkers: edits.speedMarkers || [],
-              defaultSpeed: edits.defaultSpeed ?? 1,
-              savedAt: edits.savedAt,
-            });
-            setEditorEpoch((e) => e + 1);
-          }
+          await reloadEdits();
           setAgentStatus('success');
           setTimeout(() => setAgentStatus('idle'), 3000);
           return;
@@ -993,16 +1041,18 @@ function App() {
       <ModalBody>
         <div className="flex flex-col gap-3">
           <p className="m-0 text-sm text-muted-foreground">
-            The AI proposes cuts in the editor for you to review. Nothing is exported,
-            and ⌘Z undoes the whole proposal.
+            Say what you want and the AI proposes it in the editor for you to review.
+            It can cut, reorder, and change the pace. Nothing is exported, and ⌘Z
+            undoes the whole proposal.
           </p>
           <Textarea
-            label="What should it do? (optional)"
+            label="What should it do?"
             value={agentInstructions}
             onChange={(e) => setAgentInstructions(e.target.value)}
-            placeholder="e.g. cut this down to 60 seconds and drop the tangent about pricing"
-            helperText="Leave blank to just clean up fillers, false starts, repeats, and dead air."
+            placeholder="e.g. cut this to 60 seconds, drop the pricing tangent, and speed up the setup"
+            helperText="Silent gaps come out automatically. Use ✂️ for fine-grained cleanup."
             rows={3}
+            autoFocus
           />
         </div>
       </ModalBody>
@@ -1010,7 +1060,54 @@ function App() {
         <Button variant="ghost" onClick={() => setShowAgentModal(false)}>
           Cancel
         </Button>
-        <Button onClick={handleAgentConfirm}>✨ AI edit</Button>
+        <Button onClick={handleAgentConfirm} disabled={!agentInstructions.trim()}>
+          ✨ AI edit
+        </Button>
+      </ModalFooter>
+    </Modal>
+  );
+
+  const renderHistoryModal = () => (
+    <Modal open={showHistoryModal} onOpenChange={(open) => !open && setShowHistoryModal(false)} size="sm">
+      <ModalHeader>
+        <ModalTitle>AI Edit History</ModalTitle>
+        <ModalClose />
+      </ModalHeader>
+      <ModalBody>
+        <div className="flex flex-col gap-2">
+          <p className="m-0 text-sm text-muted-foreground">
+            Every AI edit is saved here. Restoring one brings the whole timeline back
+            to that point — nothing below it is lost, so you can jump forward again.
+          </p>
+          {checkpoints.map((cp, i) => (
+            <div
+              key={`${cp.at}-${i}`}
+              className="flex items-start justify-between gap-3 rounded border border-border p-2"
+            >
+              <div className="min-w-0">
+                <div className="text-sm font-medium break-words">{cp.label}</div>
+                {cp.summary && (
+                  <div className="text-xs text-muted-foreground break-words">{cp.summary}</div>
+                )}
+              </div>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={() => handleRestore(i)}
+                isLoading={restoringIndex === i}
+                loadingText="Restoring…"
+                disabled={restoringIndex !== null}
+              >
+                Restore
+              </Button>
+            </div>
+          ))}
+        </div>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={() => setShowHistoryModal(false)}>
+          Close
+        </Button>
       </ModalFooter>
     </Modal>
   );
@@ -1275,6 +1372,7 @@ function App() {
       {renderFeaturedModal()}
       {renderExportModal()}
       {renderAgentModal()}
+      {renderHistoryModal()}
       {/* Compact toolbar */}
       <header className="app__toolbar">
         <div className="app__toolbar-left">
@@ -1405,6 +1503,17 @@ function App() {
                  agentStatus === 'error' ? 'AI edit failed' :
                  '✨ AI edit'}
               </Button>
+              {checkpoints.length > 1 && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => setShowHistoryModal(true)}
+                  title="Review or roll back earlier AI edits"
+                  aria-label="AI edit history"
+                >
+                  🕘 History ({checkpoints.length - 1})
+                </Button>
+              )}
               <Button
                 size="sm"
                 onClick={openExportModal}

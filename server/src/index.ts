@@ -11,7 +11,7 @@ import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, 
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
 import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
 import { buildExportPlan, buildSrt, renderExport, canBurnSubtitles, EXPORT_FILENAMES } from './export.js';
-import { generateAgentEdit, buildBaseline, AgentNotConfiguredError } from './agent.js';
+import { generateAgentEdit, buildBaseline, AgentNotConfiguredError, type AgentOp } from './agent.js';
 
 // Load environment variables
 dotenv.config();
@@ -47,6 +47,7 @@ interface AgentJob {
   status: 'processing' | 'completed' | 'error';
   result?: {
     summary: string;
+    ops: AgentOp[];
     deletedCount: number;
     contentCount: number;
     silenceCount: number;
@@ -59,6 +60,14 @@ interface AgentJob {
   createdAt: number;
 }
 const agentJobs = new Map<string, AgentJob>();
+
+/**
+ * How many agent checkpoints an artipod keeps. Each holds a full copy of the
+ * edit list, so this is a disk/history tradeoff — ten is a couple of MB on a
+ * long video and more iterations than anyone reviews in one sitting. Index 0
+ * (the original) is exempt from eviction.
+ */
+const MAX_CHECKPOINTS = 10;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -805,10 +814,13 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
   }
 
   const words = req.body?.words;
-  const instructions = typeof req.body?.instructions === 'string' ? req.body.instructions : undefined;
+  const instructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
 
   if (!Array.isArray(words) || words.length === 0) {
     return res.status(400).json({ error: 'words must be a non-empty array of transcript words' });
+  }
+  if (!instructions) {
+    return res.status(400).json({ error: 'Tell the agent what to do — an instruction is required.' });
   }
 
   const jobId = randomUUID();
@@ -816,11 +828,6 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
   console.log(`Agent-edit job ${jobId} started for artipod ${artipodId}: ${words.length} transcript words`);
 
   (async () => {
-    const result = await generateAgentEdit({ words, instructions });
-
-    // Keep the prior editor state as one undo snapshot so the human can revert
-    // the whole proposal with a single ⌘Z. Fall back to the fresh silence-
-    // inserted baseline (the un-edited editor view) when nothing was saved.
     const editsPath = join(artipodPath, 'edits.json');
     let existing: any = {};
     if (existsSync(editsPath)) {
@@ -831,12 +838,51 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
         ? existing.editedWords
         : buildBaseline(words);
     const priorUndoStack = Array.isArray(existing.undoStack) ? existing.undoStack : [];
+    const priorSpeedMarkers = Array.isArray(existing.speedMarkers) ? existing.speedMarkers : [];
+    const priorDefaultSpeed =
+      typeof existing.defaultSpeed === 'number' ? existing.defaultSpeed : 1;
+
+    const result = await generateAgentEdit({
+      words,
+      instructions,
+      defaultSpeed: priorDefaultSpeed,
+    });
+
+    // Two histories, different jobs. undoStack is the editor's ⌘Z — fine-grained
+    // and word-level. Checkpoints are commits: one per agent run, labelled with
+    // the instruction that produced it, holding the COMPLETE state. Word-only
+    // snapshots would silently lose speed and ordering once ops can change them,
+    // leaving a mixed state that never existed.
+    const priorCheckpoints = Array.isArray(existing.checkpoints) ? existing.checkpoints : [];
+    const checkpoints = [...priorCheckpoints];
+    if (checkpoints.length === 0) {
+      checkpoints.push({
+        at: existing.savedAt || new Date().toISOString(),
+        label: 'Original',
+        editedWords: priorEditedWords,
+        speedMarkers: priorSpeedMarkers,
+        defaultSpeed: priorDefaultSpeed,
+      });
+    }
+    checkpoints.push({
+      at: new Date().toISOString(),
+      label: instructions,
+      summary: result.summary,
+      ops: result.ops,
+      editedWords: result.editedWords,
+      speedMarkers: result.speedMarkers,
+      defaultSpeed: priorDefaultSpeed,
+    });
+    // Cap the history, but never drop the original — it is the one people
+    // reach for when an iteration goes wrong.
+    while (checkpoints.length > MAX_CHECKPOINTS) checkpoints.splice(1, 1);
 
     const editsData = {
       editedWords: result.editedWords,
       undoStack: [...priorUndoStack, priorEditedWords],
-      speedMarkers: Array.isArray(existing.speedMarkers) ? existing.speedMarkers : [],
-      defaultSpeed: typeof existing.defaultSpeed === 'number' ? existing.defaultSpeed : 1,
+      speedMarkers: result.speedMarkers,
+      defaultSpeed: priorDefaultSpeed,
+      checkpoints,
       savedAt: new Date().toISOString(),
     };
     writeFileSync(editsPath, JSON.stringify(editsData, null, 2));
@@ -849,6 +895,7 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
         status: 'completed',
         result: {
           summary: result.summary,
+          ops: result.ops,
           deletedCount: result.deletedCount,
           contentCount: result.contentCount,
           silenceCount: result.silenceCount,
@@ -902,6 +949,53 @@ app.get('/api/agent-edit/status/:jobId', (req, res) => {
   }
 
   res.json({ status: 'processing', jobId });
+});
+
+/**
+ * Roll the edit state back to a checkpoint — "scrap that, go back to how it was".
+ *
+ * Restoring does not truncate the history: later checkpoints stay listed so a
+ * rollback is itself reversible. The current state becomes a copy of the chosen
+ * checkpoint; nothing is destroyed.
+ */
+app.post('/api/artipod/:artipodId/edits/restore', (req, res) => {
+  const { artipodId } = req.params;
+  const editsPath = join(__dirname, '../artipods', artipodId, 'edits.json');
+
+  if (!existsSync(editsPath)) {
+    return res.status(404).json({ error: 'No saved edits for this artipod' });
+  }
+
+  let edits: any;
+  try {
+    edits = JSON.parse(readFileSync(editsPath, 'utf-8'));
+  } catch {
+    return res.status(500).json({ error: 'Could not read the saved edits' });
+  }
+
+  const checkpoints = Array.isArray(edits.checkpoints) ? edits.checkpoints : [];
+  const index = Number(req.body?.index);
+  if (!Number.isInteger(index) || index < 0 || index >= checkpoints.length) {
+    return res.status(400).json({
+      error: `index must be between 0 and ${Math.max(0, checkpoints.length - 1)}`,
+    });
+  }
+
+  const target = checkpoints[index];
+  const restored = {
+    ...edits,
+    editedWords: target.editedWords,
+    speedMarkers: Array.isArray(target.speedMarkers) ? target.speedMarkers : [],
+    defaultSpeed: typeof target.defaultSpeed === 'number' ? target.defaultSpeed : 1,
+    // The editor's own ⌘Z history describes a different sequence of states and
+    // would be misleading against restored words, so it starts clean.
+    undoStack: [],
+    savedAt: new Date().toISOString(),
+  };
+  writeFileSync(editsPath, JSON.stringify(restored, null, 2));
+  console.log(`Restored artipod ${artipodId} to checkpoint ${index} ("${target.label}")`);
+
+  res.json({ success: true, index, label: target.label });
 });
 
 // Legacy route - redirect old filename format to artipod lookup

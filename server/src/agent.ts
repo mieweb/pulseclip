@@ -1,17 +1,31 @@
 /**
- * Editorial agent — proposes content deletions for a transcript.
+ * Editorial agent — turns a plain-English instruction into an edit.
  *
- * The renderer (export.ts) and editor already turn a deleted-word list into a
- * cut. This module produces that list from an LLM: it rebuilds the same
- * silence-inserted baseline the editor starts from (initEditableWords in
- * @mieweb/ui), procedurally deletes the silences, then asks an LLM which
- * spoken words to drop (fillers, false starts, repeats). The result is written
- * to edits.json as a PROPOSAL — a human reviews it in the editor and can undo
- * it in one step; nothing is ever auto-exported.
+ * The renderer already does more than the agent used to be able to ask for:
+ * export.ts walks the edit list in array order and bakes per-segment speed, so
+ * deleting, reordering, and re-timing are all renderable today. This module
+ * gives the model that same vocabulary. It rebuilds the silence-inserted
+ * baseline the editor starts from (initEditableWords in @mieweb/ui), removes
+ * dead air procedurally — no judgment needed, so it costs no model call — and
+ * asks for a list of OPERATIONS against the numbered spoken words:
  *
- * Provider-pluggable via env so the same endpoint runs against Anthropic (real
- * editorial judgment) or any OpenAI-compatible base — local Ollama is the
- * zero-key dev fallback. Uses global fetch (Node 18+); no SDK dependency, so
+ *   delete from..to          drop a span
+ *   speed  from..to at rate  re-time a span (0.5–2, the renderer's range)
+ *   move   from..to before K reorder a span
+ *
+ * Every index refers to the ORIGINAL numbering, and the server resolves them
+ * all against one snapshot — models are unreliable at renumbering after their
+ * own edits, so they are never asked to. Validation rejects rather than
+ * repairs: a half-understood edit applied silently is worse than a clear
+ * failure. What comes back is a PROPOSAL written to edits.json and reviewed in
+ * the editor; nothing is ever auto-exported.
+ *
+ * Filler removal is deliberately NOT here. The ✂️ modal already does it
+ * deterministically, and whether fillers exist at all depends on the ASR —
+ * whisper base.en strips them before this code ever sees the transcript.
+ *
+ * Provider-pluggable via env so the same endpoint runs against Anthropic or any
+ * OpenAI-compatible base. Uses global fetch (Node 18+); no SDK dependency, so
  * the runtime tar and `npm ci --omit=dev` stay untouched.
  */
 
@@ -47,37 +61,19 @@ const MIN_SILENCE_MS = 400;
 const NL_SILENCE_MS = 1500;
 
 /**
- * Bound on how much the agent may cut. The default pass is conservative — it is
- * only removing disfluencies, so needing more than half the words means
- * something went wrong. A directed edit ("cut this to 60 seconds") legitimately
- * removes far more, so it gets a looser rail that still catches a model that
- * returns every index.
+ * Ceiling on how much of the spoken track a single request may delete. A real
+ * instruction ("cut this to 30 seconds") legitimately removes most of it, so the
+ * rail is loose — it exists to catch a model that returns the whole transcript,
+ * not to second-guess the edit.
  */
-const MAX_DELETE_FRACTION = 0.5;
-const DIRECTED_MAX_DELETE_FRACTION = 0.9;
+const MAX_DELETE_FRACTION = 0.9;
 
-/**
- * Longest unbroken run of deleted words tolerated on a cleanup pass. Fillers and
- * false starts come out in ones and twos; even a rambling self-correction is a
- * handful. Fifteen consecutive words is a sentence or two of real speech, which
- * a pass told to remove only disfluencies should never produce. A DIRECTED pass
- * is exempt — "drop the part about pricing" is *supposed* to cut one long block.
- */
-const DEGENERATE_RUN_WORDS = 15;
+/** Most ops one response may contain; past this it is flailing, not editing. */
+const MAX_OPS = 50;
 
-/** Share of deletions in a single run that marks an over-cap response as a runaway */
-const SINGLE_BLOCK_FRACTION = 0.9;
-
-/** Length of the longest consecutive run in a sorted, deduped index list */
-function longestRunLength(sorted: number[]): number {
-  let longest = 0;
-  let run = 0;
-  for (let i = 0; i < sorted.length; i++) {
-    run = i > 0 && sorted[i] === sorted[i - 1] + 1 ? run + 1 : 1;
-    if (run > longest) longest = run;
-  }
-  return longest;
-}
+/** atempo's range, which is also the editor's — see clampSpeed in export.ts */
+const MIN_RATE = 0.5;
+const MAX_RATE = 2;
 
 const isSilence = (wordType?: string): boolean =>
   wordType === 'silence' || wordType === 'silence-newline';
@@ -199,36 +195,36 @@ export function resolveAgentConfig(): AgentConfig {
 // a couple of minutes.
 const LLM_TIMEOUT_MS = 120 * 1000;
 
-const BASE_PROMPT =
-  'You are a meticulous video editor tightening the spoken track of a short product-demo video. ' +
-  'You receive the transcript as a numbered list of words. Decide which words to DELETE. ' +
-  'The result is a cut of the original recording, so you can only remove words — you cannot ' +
-  'add or reorder them. Never leave a dangling or ungrammatical fragment: cut whole phrases ' +
-  'rather than stranding half of one. ' +
-  'Respond with ONLY a JSON object, no prose, no code fences.';
-
-/** Default pass: no direction given, so only disfluencies come out. */
-const CLEANUP_PROMPT =
-  ' Delete ONLY: filler words (um, uh, er, like, you know, I mean, sort of), false starts and ' +
-  'self-corrections, verbatim repeated words or phrases, and clearly redundant restatements. ' +
-  'NEVER delete words that carry meaning. When unsure, KEEP the word — under-editing is far ' +
-  'better than cutting real content. Deleting nothing is a valid answer.';
-
 /**
- * Directed pass: the person asked for something specific. Their instruction
- * outranks the conservative default — "cut this to 60 seconds" or "drop the
- * part about pricing" REQUIRES removing meaningful content, so the cleanup
- * rule above would sabotage it.
+ * The agent edits by issuing the same operations a person performs in the
+ * editor. Ranges are inclusive and every index refers to the ORIGINAL numbering
+ * shown in the prompt — ops never renumber for each other, so the model does not
+ * have to track its own edits mid-list (which it gets wrong). The server
+ * resolves all of them against one snapshot.
  */
-const DIRECTED_PROMPT =
-  " The editor's instructions are the goal and take priority: follow them even when doing so " +
-  'means cutting substantive content. Still remove obvious fillers and false starts along the ' +
-  'way, and keep what remains coherent and worth watching on its own. If the instructions ask ' +
-  'for a target length, estimate from the timestamps that roughly 150 spoken words run one ' +
-  'minute. If they are ambiguous, choose the most useful reading and proceed.';
+export type AgentOp =
+  | { op: 'delete'; from: number; to: number }
+  | { op: 'speed'; from: number; to: number; rate: number }
+  | { op: 'move'; from: number; to: number; before: number };
 
-const buildSystemPrompt = (hasInstructions: boolean): string =>
-  BASE_PROMPT + (hasInstructions ? DIRECTED_PROMPT : CLEANUP_PROMPT);
+const SYSTEM_PROMPT =
+  'You are a video editor working on a short product-demo recording. You receive its transcript ' +
+  'as a numbered list of spoken words, and you edit by issuing operations against those numbers.\n\n' +
+  'Available operations:\n' +
+  '  {"op":"delete","from":N,"to":M}            — remove words N through M (inclusive)\n' +
+  '  {"op":"speed","from":N,"to":M,"rate":1.5}  — play words N through M at rate (0.5–2)\n' +
+  '  {"op":"move","from":N,"to":M,"before":K}   — move words N through M so they play before word K\n\n' +
+  'Rules:\n' +
+  '- Every index refers to the ORIGINAL numbering in the list below. Do NOT renumber after an ' +
+  'operation; write every op as if the transcript were untouched.\n' +
+  '- You are cutting a real recording, so you can only remove, reorder, and re-time existing ' +
+  'words. You cannot add words or change what was said.\n' +
+  '- Cut whole phrases, never half of one. What remains must read as coherent speech.\n' +
+  '- Ranges of the same operation must not overlap, and you cannot move a range you also delete.\n' +
+  "- The editor's instruction is the goal. Follow it even when it means cutting substantive " +
+  'content. If it is ambiguous, choose the most useful reading and proceed.\n' +
+  '- Use as few operations as will do the job.\n\n' +
+  'Respond with ONLY a JSON object, no prose, no code fences.';
 
 interface NumberedWord {
   /** Sequential index shown to the LLM */
@@ -242,29 +238,24 @@ function buildUserPrompt(
   content: NumberedWord[],
   cap: number,
   spokenMs: number,
-  instructions?: string
+  instructions: string
 ): string {
-  const list = content.map((w) => `${w.num}: ${w.text}`).join('\n');
-  const lines: string[] = [];
-  if (instructions && instructions.trim()) {
-    lines.push(`Editor's instructions: ${instructions.trim()}`, '');
-  }
-  if (spokenMs > 0) {
-    lines.push(
-      `The recording currently runs about ${Math.round(spokenMs / 1000)} seconds ` +
-        `across ${content.length} spoken words.`,
-      ''
-    );
-  }
-  lines.push(
+  return [
+    `Editor's instruction: ${instructions}`,
+    '',
+    `The recording runs about ${Math.round(spokenMs / 1000)} seconds across ${content.length} ` +
+      'spoken words. Roughly 150 spoken words play in a minute, so use that to judge length ' +
+      'targets.',
+    '',
     'Transcript words (index: word):',
-    list,
+    content.map((w) => `${w.num}: ${w.text}`).join('\n'),
     '',
     'Return JSON of exactly this shape:',
-    '{"delete": [<integers, the indices of words to delete>], "summary": "<one short sentence describing what you cut>"}',
-    `Delete at most ${cap} words. If nothing should be cut, return an empty "delete" array.`
-  );
-  return lines.join('\n');
+    '{"ops": [<operations, applied in order>], "summary": "<one short sentence describing the edit>"}',
+    `Delete at most ${cap} of the ${content.length} words, and use at most ${MAX_OPS} operations. ` +
+      'If the instruction asks for nothing that can be done by deleting, reordering, or re-timing ' +
+      'words, return an empty "ops" array and say why in the summary.',
+  ].join('\n');
 }
 
 /** Extract the first balanced JSON object from a possibly-noisy model reply */
@@ -345,39 +336,199 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
 }
 
 export interface AgentEditResult {
-  /** The proposed edit list (silences deleted + LLM content deletions) */
+  /** The proposed edit list, in playback order */
   editedWords: EditableWord[];
+  /** Speed markers derived from any `speed` ops, keyed to the new ordering */
+  speedMarkers: { wordIndex: number; speed: number }[];
   summary: string;
-  /** Number of spoken words the LLM chose to delete */
+  /** The validated ops that produced this proposal — surfaced for review */
+  ops: AgentOp[];
+  /** Spoken words removed */
   deletedCount: number;
   /** Total spoken (non-silence) words considered */
   contentCount: number;
-  /** Number of silence gaps removed procedurally */
+  /** Silence gaps removed procedurally */
   silenceCount: number;
   provider: string;
   model: string;
 }
 
+/** A validation failure the person can act on, as opposed to a transport error */
+class AgentProposalError extends Error {}
+
+const isRange = (v: any): boolean =>
+  Number.isInteger(v?.from) && Number.isInteger(v?.to) && v.from >= 0 && v.from <= v.to;
+
+const overlaps = (a: { from: number; to: number }, b: { from: number; to: number }): boolean =>
+  a.from <= b.to && b.from <= a.to;
+
 /**
- * Runs the full agent pass on raw transcript words:
- *   baseline (with silences) -> delete silences -> LLM picks content cuts ->
- *   validate (in-range, unique, <= 50% cap) -> apply.
- * Throws AgentNotConfiguredError when no LLM is available, or Error on an LLM /
- * validation failure. Never mutates persisted state — the caller writes the
- * result to edits.json with the prior state kept as an undo snapshot.
+ * Turns the model's raw reply into ops we are willing to apply. Everything here
+ * rejects rather than repairs: a half-understood edit silently applied is worse
+ * than a clear failure the person can retry.
  */
-export async function generateAgentEdit(opts: {
-  words: TranscriptWordLike[];
-  instructions?: string;
-}): Promise<AgentEditResult> {
-  const { words, instructions } = opts;
+function validateOps(raw: unknown, wordCount: number, cap: number): AgentOp[] {
+  if (!Array.isArray(raw)) {
+    throw new AgentProposalError('The agent did not return an "ops" array.');
+  }
+  if (raw.length > MAX_OPS) {
+    throw new AgentProposalError(
+      `The agent returned ${raw.length} operations (limit ${MAX_OPS}). Refusing the proposal.`
+    );
+  }
+
+  const ops: AgentOp[] = [];
+  for (const item of raw as any[]) {
+    const kind = item?.op;
+    if (kind !== 'delete' && kind !== 'speed' && kind !== 'move') {
+      throw new AgentProposalError(`Unknown operation "${kind}".`);
+    }
+    if (!isRange(item) || item.to >= wordCount) {
+      throw new AgentProposalError(
+        `Operation "${kind}" has an out-of-range span (${item?.from}–${item?.to}); ` +
+          `the transcript has ${wordCount} words.`
+      );
+    }
+    if (kind === 'speed') {
+      const rate = Number(item.rate);
+      if (!Number.isFinite(rate) || rate < MIN_RATE || rate > MAX_RATE) {
+        throw new AgentProposalError(
+          `Speed rate ${item.rate} is outside the ${MIN_RATE}–${MAX_RATE} range the renderer supports.`
+        );
+      }
+      ops.push({ op: 'speed', from: item.from, to: item.to, rate });
+      continue;
+    }
+    if (kind === 'move') {
+      const before = Number(item.before);
+      // `before === wordCount` means "move to the very end".
+      if (!Number.isInteger(before) || before < 0 || before > wordCount) {
+        throw new AgentProposalError(`Move target ${item.before} is out of range.`);
+      }
+      if (before > item.from && before <= item.to) {
+        throw new AgentProposalError('A move cannot target a position inside the range it moves.');
+      }
+      ops.push({ op: 'move', from: item.from, to: item.to, before });
+      continue;
+    }
+    ops.push({ op: 'delete', from: item.from, to: item.to });
+  }
+
+  // Same-kind overlaps are ambiguous (which rate wins? which move runs first?),
+  // and moving something you also delete is incoherent. Both mean the model lost
+  // track of its own plan, so neither is worth guessing at.
+  for (const kind of ['delete', 'speed', 'move'] as const) {
+    const same = ops.filter((o) => o.op === kind);
+    for (let i = 0; i < same.length; i++) {
+      for (let j = i + 1; j < same.length; j++) {
+        if (overlaps(same[i], same[j])) {
+          throw new AgentProposalError(
+            `Two "${kind}" operations overlap (${same[i].from}–${same[i].to} and ` +
+              `${same[j].from}–${same[j].to}).`
+          );
+        }
+      }
+    }
+  }
+  for (const mv of ops.filter((o): o is Extract<AgentOp, { op: 'move' }> => o.op === 'move')) {
+    for (const del of ops.filter((o): o is Extract<AgentOp, { op: 'delete' }> => o.op === 'delete')) {
+      if (overlaps(mv, del)) {
+        throw new AgentProposalError(
+          `The agent tried to move words ${mv.from}–${mv.to} that it also deletes.`
+        );
+      }
+    }
+  }
+
+  const deleted = ops
+    .filter((o) => o.op === 'delete')
+    .reduce((n, o) => n + (o.to - o.from + 1), 0);
+  if (deleted > cap) {
+    throw new AgentProposalError(
+      `The agent asked to delete ${deleted} of ${wordCount} words, past the ${cap}-word limit. ` +
+        'Refusing the proposal — try a narrower instruction, or a more capable model.'
+    );
+  }
+
+  return ops;
+}
+
+/**
+ * Applies validated ops to the baseline.
+ *
+ * Deletes and speeds are recorded against each word's ORIGINAL number first, so
+ * they are immune to the reordering that `move` does. Only then are moves
+ * applied to the array, and only then are speed markers derived — because
+ * markers are keyed by position in the final array, they cannot be computed
+ * until the order is settled.
+ */
+function applyOps(
+  baseline: EditableWord[],
+  content: NumberedWord[],
+  ops: AgentOp[],
+  defaultSpeed: number
+): { editedWords: EditableWord[]; speedMarkers: { wordIndex: number; speed: number }[] } {
+  const rateByNum = new Map<number, number>();
+
+  for (const op of ops) {
+    for (let n = op.from; n <= op.to; n++) {
+      if (op.op === 'delete') baseline[content[n].arrayIndex].deleted = true;
+      if (op.op === 'speed') rateByNum.set(n, op.rate);
+    }
+  }
+
+  // Moves operate on entry identity, not index, so earlier moves shifting the
+  // array cannot corrupt later ones.
+  let order = [...baseline];
+  for (const op of ops) {
+    if (op.op !== 'move') continue;
+    const first = baseline[content[op.from].arrayIndex];
+    const last = baseline[content[op.to].arrayIndex];
+    const start = order.indexOf(first);
+    const end = order.indexOf(last);
+    if (start === -1 || end === -1 || end < start) continue;
+
+    const slice = order.slice(start, end + 1);
+    const rest = [...order.slice(0, start), ...order.slice(end + 1)];
+    // `before === content.length` appends; otherwise land immediately ahead of
+    // the target word wherever it now sits.
+    const anchor =
+      op.before >= content.length ? null : baseline[content[op.before].arrayIndex];
+    const at = anchor ? rest.indexOf(anchor) : rest.length;
+    rest.splice(at === -1 ? rest.length : at, 0, ...slice);
+    order = rest;
+  }
+
+  // Derive markers from the settled order. A marker sets the speed from its
+  // position onward (see speedAtIndex in export.ts), so one is emitted only
+  // where the rate actually changes.
+  const numByArrayIndex = new Map(content.map((c) => [c.arrayIndex, c.num]));
+  const speedMarkers: { wordIndex: number; speed: number }[] = [];
+  let current = defaultSpeed;
+  order.forEach((entry, index) => {
+    if (entry.deleted) return;
+    const num = numByArrayIndex.get(entry.originalIndex);
+    if (num === undefined) return; // silence — inherits whatever is in effect
+    const rate = rateByNum.get(num) ?? defaultSpeed;
+    if (rate !== current) {
+      speedMarkers.push({ wordIndex: index, speed: rate });
+      current = rate;
+    }
+  });
+
+  return { editedWords: order, speedMarkers };
+}
+
+/**
+ * Baseline the model reasons about: silences inserted then procedurally
+ * deleted (dead air is never wanted and needs no judgment, so it costs no model
+ * call), and the remaining spoken words numbered for the prompt.
+ */
+function prepare(words: TranscriptWordLike[]) {
   if (!Array.isArray(words) || words.length === 0) {
     throw new Error('No transcript words provided');
   }
 
-  const config = resolveAgentConfig();
-
-  // Baseline with silences, then procedurally delete the silences
   const editedWords = buildBaseline(words);
   let silenceCount = 0;
   for (const ew of editedWords) {
@@ -387,7 +538,6 @@ export async function generateAgentEdit(opts: {
     }
   }
 
-  // Number the spoken words for the LLM, mapping each number back to its slot
   const content: NumberedWord[] = [];
   editedWords.forEach((ew, arrayIndex) => {
     if (!isSilence(ew.word.wordType)) {
@@ -396,26 +546,64 @@ export async function generateAgentEdit(opts: {
   });
 
   if (content.length === 0) {
-    return {
-      editedWords,
-      summary: 'No spoken words to edit.',
-      deletedCount: 0,
-      contentCount: 0,
-      silenceCount,
-      provider: config.provider,
-      model: config.model,
-    };
+    throw new Error('This transcript has no spoken words to edit.');
   }
 
-  const directed = Boolean(instructions && instructions.trim());
-  const cap = Math.floor(
-    content.length * (directed ? DIRECTED_MAX_DELETE_FRACTION : MAX_DELETE_FRACTION)
-  );
-  const spokenMs = Math.max(0, words[words.length - 1].endMs - words[0].startMs);
+  return { editedWords, content, silenceCount };
+}
 
+/**
+ * Validate and apply an operation list with no model involved. This is the
+ * deterministic half of the agent — the same code path the LLM result goes
+ * through — so a script can drive an edit directly, and so the applier can be
+ * tested without spending a model call.
+ */
+export function applyAgentOps(
+  words: TranscriptWordLike[],
+  rawOps: unknown,
+  defaultSpeed = 1
+): Omit<AgentEditResult, 'summary' | 'provider' | 'model'> {
+  const { editedWords, content, silenceCount } = prepare(words);
+  const cap = Math.floor(content.length * MAX_DELETE_FRACTION);
+  const ops = validateOps(rawOps, content.length, cap);
+  const applied = applyOps(editedWords, content, ops, defaultSpeed);
+
+  return {
+    editedWords: applied.editedWords,
+    speedMarkers: applied.speedMarkers,
+    ops,
+    deletedCount: editedWords.filter((ew) => ew.deleted && !isSilence(ew.word.wordType)).length,
+    contentCount: content.length,
+    silenceCount,
+  };
+}
+
+/**
+ * Runs one agent pass: build the editor's baseline, ask the model for an
+ * operation list against it, validate, and apply. Throws AgentNotConfiguredError
+ * when no LLM is available, or Error on an LLM or validation failure. Never
+ * touches persisted state — the caller writes the result and checkpoints it.
+ */
+export async function generateAgentEdit(opts: {
+  words: TranscriptWordLike[];
+  instructions: string;
+  defaultSpeed?: number;
+}): Promise<AgentEditResult> {
+  const { words } = opts;
+  const instructions = (opts.instructions || '').trim();
+  const defaultSpeed = opts.defaultSpeed ?? 1;
+
+  if (!instructions) {
+    throw new Error('Tell the agent what to do — an instruction is required.');
+  }
+
+  const config = resolveAgentConfig();
+  const { content } = prepare(words);
+  const cap = Math.floor(content.length * MAX_DELETE_FRACTION);
+  const spokenMs = Math.max(0, words[words.length - 1].endMs - words[0].startMs);
   const raw = await callLLM(
     config,
-    buildSystemPrompt(directed),
+    SYSTEM_PROMPT,
     buildUserPrompt(content, cap, spokenMs, instructions)
   );
 
@@ -426,67 +614,13 @@ export async function generateAgentEdit(opts: {
     throw new Error(`Could not parse the agent's response as JSON: ${(err as Error).message}`);
   }
 
-  // Validate: in-range unique integers, within the cap chosen above
-  const seen = new Set<number>();
-  const rawDelete: unknown[] = Array.isArray(parsed?.delete) ? parsed.delete : [];
-  const chosen: number[] = [];
-  for (const value of rawDelete) {
-    const n = typeof value === 'number' ? value : Number(value);
-    if (!Number.isInteger(n) || n < 0 || n >= content.length || seen.has(n)) continue;
-    seen.add(n);
-    chosen.push(n);
-  }
-  chosen.sort((a, b) => a - b);
-
-  // Shape check. A model that stops selecting and starts counting emits one
-  // unbroken run of indices — the deletions stop describing an edit and just
-  // describe a range. Truncating that to the cap doesn't rescue it, it just
-  // makes an arbitrary cut somewhere in the middle of a sentence, so fail loudly
-  // instead. See DEGENERATE_RUN_WORDS for why the two rules differ.
-  const runs = longestRunLength(chosen);
-  if (chosen.length > 0) {
-    const singleBlock = runs >= chosen.length * SINGLE_BLOCK_FRACTION;
-    if (!directed && runs >= DEGENERATE_RUN_WORDS) {
-      throw new Error(
-        `The agent returned ${runs} consecutive words to delete, which is a block of speech rather ` +
-          `than filler. Refusing the proposal — try again, or use a more capable model.`
-      );
-    }
-    if (chosen.length > cap && singleBlock) {
-      throw new Error(
-        `The agent asked to delete ${chosen.length} of ${content.length} words as one unbroken run, ` +
-          `past the ${cap}-word limit. That is a runaway response, not an edit. Refusing the ` +
-          `proposal — try again, or use a more capable model.`
-      );
-    }
-  }
-
-  if (chosen.length > cap) {
-    console.warn(
-      `Agent proposed ${chosen.length} deletions; capping to ${cap} of ${content.length} spoken words`
-    );
-    chosen.length = cap;
-  }
-
-  // Apply content deletions onto the baseline
-  for (const num of chosen) {
-    editedWords[content[num].arrayIndex].deleted = true;
-  }
+  // Same validation and application path a scripted edit takes.
+  const applied = applyAgentOps(words, parsed?.ops, defaultSpeed);
 
   const summary =
     typeof parsed?.summary === 'string' && parsed.summary.trim()
       ? parsed.summary.trim()
-      : chosen.length > 0
-      ? `Removed ${chosen.length} filler/redundant word${chosen.length === 1 ? '' : 's'} and ${silenceCount} silence${silenceCount === 1 ? '' : 's'}.`
-      : `Removed ${silenceCount} silence${silenceCount === 1 ? '' : 's'}; no content changes.`;
+      : `Applied ${applied.ops.length} operation${applied.ops.length === 1 ? '' : 's'}.`;
 
-  return {
-    editedWords,
-    summary,
-    deletedCount: chosen.length,
-    contentCount: content.length,
-    silenceCount,
-    provider: config.provider,
-    model: config.model,
-  };
+  return { ...applied, summary, provider: config.provider, model: config.model };
 }
