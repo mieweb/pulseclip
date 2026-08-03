@@ -33,6 +33,10 @@ const __dirname = dirname(__filename);
 const app = express();
 const port = Number(process.env.PORT) || 3000;
 
+function artipodMediaUrl(artipodId: string, filename: string): string {
+  return `/artipods/${encodeURIComponent(artipodId)}/${encodeURIComponent(filename)}`;
+}
+
 // Initialize provider registry
 const providerRegistry = initializeProviders();
 
@@ -165,7 +169,7 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
       console.error('Failed to cleanup duplicate upload:', e);
     }
     
-    const fileUrl = `/artipods/${existing.artipodId}/${existing.filename}`;
+    const fileUrl = artipodMediaUrl(existing.artipodId, existing.filename);
     return res.json({
       success: true,
       artipodId: existing.artipodId,
@@ -181,7 +185,7 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   // Register the new checksum
   registerChecksum(checksum, artipodId, req.file.originalname);
   
-  const fileUrl = `/artipods/${artipodId}/${req.file.originalname}`;
+  const fileUrl = artipodMediaUrl(artipodId, req.file.originalname);
 
   res.json({
     success: true,
@@ -218,8 +222,8 @@ app.post('/api/transcribe', async (req, res) => {
 
     // Extract artipodId and filename from URL: /artipods/{artipodId}/{filename}
     const urlParts = mediaUrl.split('/');
-    const filename = urlParts.pop() || '';
-    const artipodId = urlParts.pop() || '';
+    const filename = decodeURIComponent(urlParts.pop() || '');
+    const artipodId = decodeURIComponent(urlParts.pop() || '');
     const localPath = join(__dirname, '../artipods', artipodId, filename);
 
     // Check cache first (unless skipCache is true) - no auth required for cached results
@@ -431,7 +435,7 @@ function getArtipodMetadata(artipodId: string, baseUrl: string): ArtipodMetadata
   
   // Get media URL
   const mediaFile = findMediaInArtipod(artipodPath);
-  const mediaUrl = mediaFile ? `${baseUrl}/artipods/${artipodId}/${mediaFile}` : null;
+  const mediaUrl = mediaFile ? `${baseUrl}${artipodMediaUrl(artipodId, mediaFile)}` : null;
   
   // Format duration as X.X mins and append to title
   let displayTitle = title;
@@ -531,7 +535,7 @@ app.get('/api/artipod/:artipodId', (req, res) => {
   
   const mediaPath = join(artipodPath, mediaFile);
   const stats = statSync(mediaPath);
-  const fileUrl = `/artipods/${artipodId}/${mediaFile}`;
+  const fileUrl = artipodMediaUrl(artipodId, mediaFile);
   
   // Check for thumbnail
   const thumbnailPath = join(artipodPath, 'thumbnail.png');
