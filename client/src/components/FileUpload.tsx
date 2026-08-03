@@ -5,19 +5,30 @@ import { Button } from '@mieweb/ui/components/Button';
 import { Alert } from '@mieweb/ui/components/Alert';
 import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
 import { CloudUpload } from 'lucide-react';
+import { inspectMediaFile, type ContractReport } from '../lib/videoContract';
+import { UploadContractWarning } from './UploadContractWarning';
 
 interface FileUploadProps {
   onFileUploaded: (fileUrl: string, artipodId: string, filename: string) => void;
+  /**
+   * Fired once the picked file has been inspected against the upload
+   * contract. Lets the parent keep the warning on screen after this
+   * component unmounts on navigation.
+   */
+  onInspected?: (report: ContractReport, file: File) => void;
   disabled?: boolean;
   apiKey?: string;
   onAuthError?: () => void;
 }
 
-export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiKey, onAuthError }) => {
+export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, onInspected, disabled, apiKey, onAuthError }) => {
   const [isDragging, setIsDragging] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [contractReport, setContractReport] = useState<ContractReport | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  /** Guards against a slow inspection of an earlier file landing last. */
+  const inspectionSeq = useRef(0);
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -30,9 +41,32 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiK
     setIsDragging(false);
   }, []);
 
+  /**
+   * Inspect the file against the upload contract.
+   *
+   * Deliberately NOT awaited by the caller: it runs alongside the upload so
+   * it never delays it, and a violation only ever produces a warning.
+   */
+  const inspect = (file: File) => {
+    const seq = ++inspectionSeq.current;
+    inspectMediaFile(file)
+      .then((report) => {
+        if (seq !== inspectionSeq.current) return;
+        setContractReport(report.ok ? null : report);
+        // Reported either way so the parent can clear a stale warning from
+        // a previous upload.
+        onInspected?.(report, file);
+      })
+      .catch(() => {
+        // Inspection is advisory; a failure must never affect the upload.
+      });
+  };
+
   const uploadFile = async (file: File) => {
     setUploading(true);
     setError(null);
+    setContractReport(null);
+    inspect(file);
 
     try {
       const formData = new FormData();
@@ -130,6 +164,13 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, disabled, apiK
           </div>
         )}
       </Card>
+      {contractReport && (
+        <UploadContractWarning
+          className="mt-4 text-left"
+          report={contractReport}
+          onDismiss={() => setContractReport(null)}
+        />
+      )}
       {error && <Alert variant="danger">{error}</Alert>}
     </div>
   );

@@ -15,7 +15,8 @@
     "build:server": "npm run build --workspace=server",
     "build:client": "npm run build --workspace=client",
     "start": "npm run start --workspace=server",
-    "prod": "npm run build && npm run start"
+    "prod": "npm run build && npm run start",
+    "test": "npm run test --workspace=client"
   },
   "keywords": ["transcription", "audio", "video", "assemblyai"],
   "author": "",

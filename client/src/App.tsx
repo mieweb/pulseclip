@@ -16,6 +16,8 @@ import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
 import { AudioLines, Film, Zap, Scissors, Type } from 'lucide-react';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
+import { UploadContractWarning } from './components/UploadContractWarning';
+import type { ContractReport } from './lib/videoContract';
 import { rasterizeLowerThird } from './lib/rasterize';
 import type { Provider, TranscriptionResult, FeaturedPulse, ArtipodListItem, EditableWord, SpeedMarker, PlaybackSpeed } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
@@ -129,6 +131,18 @@ function App() {
   const [transcribingAsync, setTranscribingAsync] = useState(false);
   const [transcriptionResult, setTranscriptionResult] = useState<TranscriptionResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  /**
+   * Upload-contract violations for the file the user just uploaded. Held here rather than in
+   * FileUpload so the warning survives the navigation to the new artipod — the dropzone unmounts
+   * the moment the upload lands.
+   *
+   * `artipodId` is null while the upload is still in flight and gets stamped on once the server
+   * names the artipod, so the warning stops following the user around once they open another pulse.
+   */
+  const [uploadWarning, setUploadWarning] = useState<{
+    report: ContractReport;
+    artipodId: string | null;
+  } | null>(null);
   const [viewMode, setViewMode] = useState<'transcript' | 'data'>('transcript');
   const [dataSource, setDataSource] = useState<'editor' | 'original'>('editor');
   const [dataFormat, setDataFormat] = useState<'yaml' | 'json'>('yaml');
@@ -513,6 +527,10 @@ function App() {
     rememberMyUpload(newArtipodId);
     // Reset auto-transcribe flag for new file
     hasAutoTranscribed.current = false;
+    // Bind any playback warning to the artipod it describes.
+    setUploadWarning((current) =>
+      current && current.artipodId === null ? { ...current, artipodId: newArtipodId } : current
+    );
     setMediaUrl(url);
     setArtipodId(newArtipodId);
     setMediaFilename(filename);
@@ -1502,7 +1520,15 @@ function App() {
               </h2>
               <div className="grid items-stretch gap-6 md:grid-cols-2">
                 <PulseCamButton onError={(err) => setError(err)} />
-                <FileUpload onFileUploaded={handleFileUploaded} disabled={false} apiKey={apiKey} onAuthError={handleAuthError} />
+                <FileUpload
+                  onFileUploaded={handleFileUploaded}
+                  onInspected={(report) =>
+                    setUploadWarning(report.ok ? null : { report, artipodId: null })
+                  }
+                  disabled={false}
+                  apiKey={apiKey}
+                  onAuthError={handleAuthError}
+                />
               </div>
             </section>
 
@@ -1790,6 +1816,16 @@ function App() {
           </button>
         </div>
       )}
+
+      {/* Playback warning for a file that broke the upload contract */}
+      {uploadWarning &&
+        (uploadWarning.artipodId === null || uploadWarning.artipodId === artipodId) && (
+          <UploadContractWarning
+            className="mx-4 mb-4 text-left"
+            report={uploadWarning.report}
+            onDismiss={() => setUploadWarning(null)}
+          />
+        )}
 
       {/* Error banner */}
       {error && (
