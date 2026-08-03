@@ -1043,7 +1043,7 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
     if (checkpoints.length === 0) {
       checkpoints.push({
         at: existing.savedAt || new Date().toISOString(),
-        label: 'Original',
+        label: 'Before AI edits',
         editedWords: priorEditedWords,
         speedMarkers: priorSpeedMarkers,
         defaultSpeed: priorDefaultSpeed,

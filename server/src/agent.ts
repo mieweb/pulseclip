@@ -220,7 +220,22 @@ const LLM_TIMEOUT_MS = 120 * 1000;
  * answer — models from Sonnet 5 onward think by default and bill it as output —
  * so it is sized well above the JSON an op list actually needs.
  */
-const ANTHROPIC_MAX_TOKENS = 8192;
+const ANTHROPIC_MAX_TOKENS = (() => {
+  const raw = Number(process.env.AGENT_MAX_OUTPUT_TOKENS);
+  return Number.isInteger(raw) && raw >= 512 ? raw : 32000;
+})();
+/**
+ * Output ceiling for OpenAI-compatible providers. Lower than Anthropic's on
+ * purpose: free tiers meter the RESERVATION, not the usage — Groq's 8k
+ * tokens-per-minute cap counts prompt + max_tokens, so an 8k ceiling makes
+ * every request too large before the model runs at all. 4k leaves room for a
+ * ~2k transcript prompt and still covers a reasoning model's thinking.
+ * AGENT_MAX_OUTPUT_TOKENS raises it on a paid tier.
+ */
+const OPENAI_MAX_TOKENS = (() => {
+  const raw = Number(process.env.AGENT_MAX_OUTPUT_TOKENS);
+  return Number.isInteger(raw) && raw >= 512 ? raw : 4096;
+})();
 
 /**
  * The agent edits by issuing the same operations a person performs in the
@@ -413,6 +428,10 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
         model: config.model,
         temperature: 0.2,
         stream: false,
+        // Reasoning models spend output tokens thinking before they answer, so
+        // this has to cover both. Without it the provider default applies and a
+        // long transcript comes back with an empty answer.
+        max_tokens: OPENAI_MAX_TOKENS,
         messages: [
           { role: 'system', content: systemPrompt },
           { role: 'user', content: userPrompt },
@@ -424,8 +443,19 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
     if (!res.ok) {
       throw new Error(`LLM API ${res.status}: ${data?.error?.message || res.statusText}`);
     }
-    const text = data?.choices?.[0]?.message?.content || '';
-    if (!text) throw new Error('LLM API returned no message content');
+    const choice = data?.choices?.[0];
+    // Reasoning models (gpt-oss and friends) split their reply: the JSON can
+    // land in `reasoning` with `content` empty. Take whichever has text —
+    // extractJson pulls the object out of either.
+    const text = choice?.message?.content || choice?.message?.reasoning || '';
+    if (!text) {
+      throw new Error(
+        choice?.finish_reason === 'length'
+          ? `${config.model} hit its ${OPENAI_MAX_TOKENS}-token limit before answering. ` +
+            'Try a shorter transcript or a simpler instruction.'
+          : `${config.model} returned no content (finish_reason: ${choice?.finish_reason ?? 'unknown'}).`
+      );
+    }
     return text;
   } catch (err) {
     if ((err as any)?.name === 'AbortError') {
