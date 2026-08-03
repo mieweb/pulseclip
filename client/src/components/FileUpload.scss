@@ -81,6 +81,11 @@
     animation: spin 1s linear infinite;
   }
   
+  &__contract-warning {
+    margin-top: 16px;
+    text-align: left;
+  }
+
   &__error {
     margin-top: 16px;
     padding: 12px;

@@ -7,6 +7,8 @@ import { MediaEditor } from './ui-staging/MediaEditor';
 import { ThemeToggle } from '@mieweb/ui/components/ThemeProvider';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
+import { UploadContractWarning } from './components/UploadContractWarning';
+import type { ContractReport } from './lib/videoContract';
 import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
 import './App.scss';
@@ -56,6 +58,18 @@ function App() {
   const [isCurrentPulseFeatured, setIsCurrentPulseFeatured] = useState(false);
   const [showFeaturedModal, setShowFeaturedModal] = useState(false);
   const [showShareModal, setShowShareModal] = useState(false);
+  /**
+   * Upload-contract violations for the file the user just uploaded. Held
+   * here rather than in FileUpload so the warning survives the navigation
+   * to the new artipod — the dropzone unmounts the moment the upload lands.
+   *
+   * `artipodId` is null while the upload is still in flight and gets stamped
+   * on once the server names the artipod, so the warning stops following the
+   * user around once they open a different pulse.
+   */
+  const [uploadWarning, setUploadWarning] = useState<
+    { report: ContractReport; artipodId: string | null } | null
+  >(null);
   const [shareUrl, setShareUrl] = useState<string | null>(null);
   const [shareError, setShareError] = useState<string | null>(null);
   const [isCreatingShare, setIsCreatingShare] = useState(false);
@@ -342,6 +356,12 @@ function App() {
   const handleFileUploaded = (url: string, newArtipodId: string, filename: string) => {
     // Reset auto-transcribe flag for new file
     hasAutoTranscribed.current = false;
+    // Bind any playback warning to the artipod it describes.
+    setUploadWarning((current) =>
+      current && current.artipodId === null
+        ? { ...current, artipodId: newArtipodId }
+        : current
+    );
     setMediaUrl(url);
     setArtipodId(newArtipodId);
     setMediaFilename(filename);
@@ -858,7 +878,13 @@ function App() {
                 <span>or</span>
               </div>
               <div className="app__upload-container">
-                <FileUpload onFileUploaded={handleFileUploaded} disabled={false} />
+                <FileUpload
+                  onFileUploaded={handleFileUploaded}
+                  onInspected={(report) =>
+                    setUploadWarning(report.ok ? null : { report, artipodId: null })
+                  }
+                  disabled={false}
+                />
               </div>
             </div>
           </section>
@@ -1096,6 +1122,16 @@ function App() {
           </button>
         </div>
       )}
+
+      {/* Playback warning for a file that broke the upload contract */}
+      {uploadWarning &&
+        (uploadWarning.artipodId === null || uploadWarning.artipodId === artipodId) && (
+          <UploadContractWarning
+            className="app__contract-warning"
+            report={uploadWarning.report}
+            onDismiss={() => setUploadWarning(null)}
+          />
+        )}
 
       {/* Error banner */}
       {error && (

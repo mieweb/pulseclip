@@ -637,6 +637,13 @@
   }
 }
 
+// Upload-contract playback warning. Sits in the same banner slot as the
+// error bar; the Alert itself is themed by @mieweb/ui, so this only places it.
+.app__contract-warning {
+  margin: 8px 16px;
+  font-size: 14px;
+}
+
 .app__error-banner {
   display: flex;
   justify-content: space-between;
