@@ -29,6 +29,8 @@
  * the runtime tar and `npm ci --omit=dev` stay untouched.
  */
 
+import { buildExportPlan } from './export.js';
+
 /** Minimal transcript word shape sent by the client */
 export interface TranscriptWordLike {
   text: string;
@@ -74,6 +76,24 @@ const MAX_OPS = 50;
 /** atempo's range, which is also the editor's — see clampSpeed in export.ts */
 const MIN_RATE = 0.5;
 const MAX_RATE = 2;
+
+/**
+ * How close to a declared length target counts as hitting it. Length is the one
+ * thing a single-shot model reliably misjudges — it estimates from a word count
+ * instead of measuring — so when it states a target we check the real number and
+ * hand it back. ±8% is about a five-second window on a minute.
+ */
+const TARGET_TOLERANCE = 0.08;
+
+/**
+ * Total model calls one request may make, including the first. Each extra round
+ * is a full call: ~4s and free on Groq, ~25s and real money on Anthropic, which
+ * is why the default is one revision rather than a convergence loop.
+ */
+const maxRounds = (): number => {
+  const raw = Number(process.env.AGENT_MAX_ROUNDS);
+  return Number.isInteger(raw) && raw >= 1 && raw <= 5 ? raw : 2;
+};
 
 const isSilence = (wordType?: string): boolean =>
   wordType === 'silence' || wordType === 'silence-newline';
@@ -230,7 +250,10 @@ const SYSTEM_PROMPT =
   '- Ranges of the same operation must not overlap, and you cannot move a range you also delete.\n' +
   "- The editor's instruction is the goal. Follow it even when it means cutting substantive " +
   'content. If it is ambiguous, choose the most useful reading and proceed.\n' +
-  '- Use as few operations as will do the job.\n\n' +
+  '- Use as few operations as will do the job.\n' +
+  '- If the instruction names a length ("under a minute", "about 30 seconds"), put that many ' +
+  'seconds in targetSeconds. The result will be measured against it and handed back to you if ' +
+  'you miss. Leave it null when no length was asked for.\n\n' +
   'Respond with ONLY a JSON object, no prose, no code fences.';
 
 interface NumberedWord {
@@ -241,28 +264,90 @@ interface NumberedWord {
   text: string;
 }
 
-function buildUserPrompt(
-  content: NumberedWord[],
-  cap: number,
-  spokenMs: number,
-  instructions: string
-): string {
-  return [
+/** The previous turn, replayed so a follow-up instruction has something to build on */
+export interface PriorTurn {
+  instruction: string;
+  ops: AgentOp[];
+  durationMs?: number;
+}
+
+/** A rejected attempt from this same request, fed back with its measured length */
+interface Attempt {
+  ops: AgentOp[];
+  durationMs: number;
+  targetSeconds: number;
+}
+
+function buildUserPrompt(opts: {
+  content: NumberedWord[];
+  cap: number;
+  spokenMs: number;
+  instructions: string;
+  prior?: PriorTurn;
+  attempt?: Attempt;
+}): string {
+  const { content, cap, spokenMs, instructions, prior, attempt } = opts;
+  const lines: string[] = [];
+
+  // Memory. Every run re-plans from the original transcript, so a follow-up is a
+  // revision of the previous plan rather than a patch on top of its result —
+  // which is why showing the old ops is enough for "now make it shorter" to mean
+  // something.
+  if (prior) {
+    lines.push(
+      'This is a follow-up. Earlier you were asked:',
+      `  "${prior.instruction}"`,
+      'and you produced:',
+      ...prior.ops.map((o) => `  ${JSON.stringify(o)}`)
+    );
+    if (prior.durationMs) {
+      lines.push(`That edit ran ${(prior.durationMs / 1000).toFixed(0)} seconds.`);
+    }
+    lines.push(
+      'The new instruction below replaces it. Write a complete plan against the original ' +
+        'transcript again — do not assume the earlier operations are still applied.',
+      ''
+    );
+  }
+
+  lines.push(
     `Editor's instruction: ${instructions}`,
     '',
     `The recording runs about ${Math.round(spokenMs / 1000)} seconds across ${content.length} ` +
       'spoken words. Roughly 150 spoken words play in a minute, so use that to judge length ' +
       'targets.',
-    '',
+    ''
+  );
+
+  // Closed loop. The model estimates length from a word count; this is the
+  // measured number from the same planner the renderer uses.
+  if (attempt) {
+    lines.push(
+      'Your previous attempt on THIS instruction was:',
+      ...attempt.ops.map((o) => `  ${JSON.stringify(o)}`),
+      `It came to ${(attempt.durationMs / 1000).toFixed(0)} seconds, but you were aiming for ` +
+        `${attempt.targetSeconds}. ` +
+        (attempt.durationMs / 1000 > attempt.targetSeconds
+          ? 'Cut more, or speed up more of it.'
+          : 'You cut too much — keep more of the recording.'),
+      'Return a corrected plan.',
+      ''
+    );
+  }
+
+  lines.push(
     'Transcript words (index: word):',
     content.map((w) => `${w.num}: ${w.text}`).join('\n'),
     '',
     'Return JSON of exactly this shape:',
-    '{"ops": [<operations, applied in order>], "summary": "<one short sentence describing the edit>"}',
+    '{"ops": [<operations, applied in order>], "summary": "<one short sentence describing the ' +
+      'edit>", "targetSeconds": <number, or null if no length was asked for>}',
     `Delete at most ${cap} of the ${content.length} words, and use at most ${MAX_OPS} operations. ` +
       'If the instruction asks for nothing that can be done by deleting, reordering, or re-timing ' +
-      'words, return an empty "ops" array and say why in the summary.',
-  ].join('\n');
+      'words, return an empty "ops" array and say why in the summary.'
+  );
+
+  return lines.join('\n');
 }
 
 /** Extract the first balanced JSON object from a possibly-noisy model reply */
@@ -352,12 +437,12 @@ async function callLLM(config: AgentConfig, systemPrompt: string, userPrompt: st
   }
 }
 
-export interface AgentEditResult {
+/** Result of applying an op list — everything that needs no model to produce */
+export interface AppliedEdit {
   /** The proposed edit list, in playback order */
   editedWords: EditableWord[];
   /** Speed markers derived from any `speed` ops, keyed to the new ordering */
   speedMarkers: { wordIndex: number; speed: number }[];
-  summary: string;
   /** The validated ops that produced this proposal — surfaced for review */
   ops: AgentOp[];
   /** Spoken words removed */
@@ -366,6 +451,16 @@ export interface AgentEditResult {
   contentCount: number;
   /** Silence gaps removed procedurally */
   silenceCount: number;
+}
+
+export interface AgentEditResult extends AppliedEdit {
+  summary: string;
+  /** Rendered length of this proposal, from the same planner export.ts uses */
+  durationMs: number;
+  /** Length the model was aiming for, when the instruction asked for one */
+  targetSeconds: number | null;
+  /** Model calls this request made — >1 means it measured a miss and revised */
+  rounds: number;
   provider: string;
   model: string;
 }
@@ -579,7 +674,7 @@ export function applyAgentOps(
   words: TranscriptWordLike[],
   rawOps: unknown,
   defaultSpeed = 1
-): Omit<AgentEditResult, 'summary' | 'provider' | 'model'> {
+): AppliedEdit {
   const { editedWords, content, silenceCount } = prepare(words);
   const cap = Math.floor(content.length * MAX_DELETE_FRACTION);
   const ops = validateOps(rawOps, content.length, cap);
@@ -605,8 +700,10 @@ export async function generateAgentEdit(opts: {
   words: TranscriptWordLike[];
   instructions: string;
   defaultSpeed?: number;
+  /** The previous run on this artipod, so a follow-up instruction has context */
+  prior?: PriorTurn;
 }): Promise<AgentEditResult> {
-  const { words } = opts;
+  const { words, prior } = opts;
   const instructions = (opts.instructions || '').trim();
   const defaultSpeed = opts.defaultSpeed ?? 1;
 
@@ -618,26 +715,75 @@ export async function generateAgentEdit(opts: {
   const { content } = prepare(words);
   const cap = Math.floor(content.length * MAX_DELETE_FRACTION);
   const spokenMs = Math.max(0, words[words.length - 1].endMs - words[0].startMs);
-  const raw = await callLLM(
-    config,
-    SYSTEM_PROMPT,
-    buildUserPrompt(content, cap, spokenMs, instructions)
-  );
+  const rounds = maxRounds();
 
-  let parsed: any;
-  try {
-    parsed = extractJson(raw);
-  } catch (err) {
-    throw new Error(`Could not parse the agent's response as JSON: ${(err as Error).message}`);
+  let attempt: Attempt | undefined;
+  let best: (AppliedEdit & { summary: string; durationMs: number }) | null = null;
+  let target: number | null = null;
+  let used = 0;
+
+  for (let round = 1; round <= rounds; round++) {
+    used = round;
+    const raw = await callLLM(
+      config,
+      SYSTEM_PROMPT,
+      buildUserPrompt({ content, cap, spokenMs, instructions, prior, attempt })
+    );
+
+    let parsed: any;
+    try {
+      parsed = extractJson(raw);
+    } catch (err) {
+      throw new Error(`Could not parse the agent's response as JSON: ${(err as Error).message}`);
+    }
+
+    // Same validation and application path a scripted edit takes. A validation
+    // failure is fatal rather than retried — a malformed plan means the model
+    // misunderstood the task, and asking again usually just spends another call.
+    const applied = applyAgentOps(words, parsed?.ops, defaultSpeed);
+    const { durationMs } = buildExportPlan(
+      applied.editedWords,
+      applied.speedMarkers,
+      defaultSpeed
+    );
+    const summary =
+      typeof parsed?.summary === 'string' && parsed.summary.trim()
+        ? parsed.summary.trim()
+        : `Applied ${applied.ops.length} operation${applied.ops.length === 1 ? '' : 's'}.`;
+
+    best = { ...applied, summary, durationMs };
+
+    const declared = Number(parsed?.targetSeconds);
+    target = Number.isFinite(declared) && declared > 0 ? declared : null;
+
+    // No length asked for, nothing measurable to check — one call is the whole job.
+    if (target === null) break;
+
+    const drift = Math.abs(durationMs / 1000 - target) / target;
+    if (drift <= TARGET_TOLERANCE) {
+      if (round > 1) {
+        console.log(
+          `Agent hit ${(durationMs / 1000).toFixed(0)}s against a ${target}s target on round ${round}`
+        );
+      }
+      break;
+    }
+
+    if (round < rounds) {
+      console.log(
+        `Agent came to ${(durationMs / 1000).toFixed(0)}s against a ${target}s target; revising`
+      );
+      attempt = { ops: applied.ops, durationMs, targetSeconds: target };
+    }
   }
 
-  // Same validation and application path a scripted edit takes.
-  const applied = applyAgentOps(words, parsed?.ops, defaultSpeed);
-
-  const summary =
-    typeof parsed?.summary === 'string' && parsed.summary.trim()
-      ? parsed.summary.trim()
-      : `Applied ${applied.ops.length} operation${applied.ops.length === 1 ? '' : 's'}.`;
-
-  return { ...applied, summary, provider: config.provider, model: config.model };
+  // The last attempt stands even if it never converged. It is a proposal the
+  // person reviews, and a near-miss they can trim by hand beats an error.
+  return {
+    ...best!,
+    targetSeconds: target,
+    rounds: used,
+    provider: config.provider,
+    model: config.model,
+  };
 }

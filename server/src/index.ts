@@ -51,6 +51,9 @@ interface AgentJob {
     deletedCount: number;
     contentCount: number;
     silenceCount: number;
+    durationMs: number;
+    targetSeconds: number | null;
+    rounds: number;
     provider: string;
     model: string;
   };
@@ -842,10 +845,26 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
     const priorDefaultSpeed =
       typeof existing.defaultSpeed === 'number' ? existing.defaultSpeed : 1;
 
+    // Hand the model its own last turn so a follow-up ("now make it shorter")
+    // is a revision rather than a fresh guess. Checkpoint 0 is the untouched
+    // original, so only a later one describes something the agent did.
+    const lastAgentRun =
+      Array.isArray(existing.checkpoints) && existing.checkpoints.length > 1
+        ? existing.checkpoints[existing.checkpoints.length - 1]
+        : null;
+
     const result = await generateAgentEdit({
       words,
       instructions,
       defaultSpeed: priorDefaultSpeed,
+      prior:
+        lastAgentRun && Array.isArray(lastAgentRun.ops)
+          ? {
+              instruction: lastAgentRun.label,
+              ops: lastAgentRun.ops,
+              durationMs: lastAgentRun.durationMs,
+            }
+          : undefined,
     });
 
     // Two histories, different jobs. undoStack is the editor's ⌘Z — fine-grained
@@ -869,6 +888,8 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
       label: instructions,
       summary: result.summary,
       ops: result.ops,
+      // Persisted so the next run can be told how long its own last edit ran
+      durationMs: result.durationMs,
       editedWords: result.editedWords,
       speedMarkers: result.speedMarkers,
       defaultSpeed: priorDefaultSpeed,
@@ -899,6 +920,9 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
           deletedCount: result.deletedCount,
           contentCount: result.contentCount,
           silenceCount: result.silenceCount,
+          durationMs: result.durationMs,
+          targetSeconds: result.targetSeconds,
+          rounds: result.rounds,
           provider: result.provider,
           model: result.model,
         },
@@ -958,7 +982,7 @@ app.get('/api/agent-edit/status/:jobId', (req, res) => {
  * rollback is itself reversible. The current state becomes a copy of the chosen
  * checkpoint; nothing is destroyed.
  */
-app.post('/api/artipod/:artipodId/edits/restore', (req, res) => {
+app.post('/api/artipod/:artipodId/edits/restore', requireAuth, (req, res) => {
   const { artipodId } = req.params;
   const editsPath = join(__dirname, '../artipods', artipodId, 'edits.json');
 
