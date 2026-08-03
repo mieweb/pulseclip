@@ -991,7 +991,9 @@ function App() {
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || `AI edit failed (${response.status})`);
+        // Prefer `message` — on a 409 the `error` field is just "Busy", while
+        // the message says what's actually happening and what to do about it.
+        throw new Error(data.message || data.error || `AI edit failed (${response.status})`);
       }
 
       const { jobId } = await response.json();

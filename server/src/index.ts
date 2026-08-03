@@ -65,6 +65,14 @@ interface AgentJob {
 const agentJobs = new Map<string, AgentJob>();
 
 /**
+ * artipodId -> jobId of the agent run currently holding it. The agent is the one
+ * endpoint that does read-modify-write on edits.json across an await, so it is
+ * the one that can lose a checkpoint to a concurrent caller. Released in a
+ * finally, so a thrown run frees the pulse rather than wedging it forever.
+ */
+const agentLocks = new Map<string, string>();
+
+/**
  * How many agent checkpoints an artipod keeps. Each holds a full copy of the
  * edit list, so this is a disk/history tradeoff — ten is a couple of MB on a
  * long video and more iterations than anyone reviews in one sitting. Index 0
@@ -826,7 +834,22 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
     return res.status(400).json({ error: 'Tell the agent what to do — an instruction is required.' });
   }
 
+  // One agent run per pulse at a time. Two concurrent runs both read edits.json,
+  // both write it, and the loser's checkpoint is gone — the person sees an edit
+  // they never asked for and a history entry that vanished. Rejecting is the
+  // honest outcome: the caller knows their run didn't happen, which a silent
+  // overwrite never tells them.
+  const running = agentLocks.get(artipodId);
+  if (running) {
+    return res.status(409).json({
+      error: 'Busy',
+      message: 'An AI edit is already running on this pulse. Wait for it to finish.',
+      jobId: running,
+    });
+  }
+
   const jobId = randomUUID();
+  agentLocks.set(artipodId, jobId);
   agentJobs.set(jobId, { id: jobId, status: 'processing', createdAt: Date.now() });
   console.log(`Agent-edit job ${jobId} started for artipod ${artipodId}: ${words.length} transcript words`);
 
@@ -942,6 +965,11 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
         createdAt: Date.now(),
       });
       console.error(`Agent-edit job ${jobId} failed:`, error);
+    })
+    .finally(() => {
+      // Only clear if we still own it. A lock re-taken by a later run must not
+      // be released by this one finishing late.
+      if (agentLocks.get(artipodId) === jobId) agentLocks.delete(artipodId);
     });
 
   res.status(202).json({ jobId, status: 'processing' });
