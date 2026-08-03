@@ -1,0 +1,106 @@
+name: Deploy dev
+
+on:
+  push:
+    branches: [ dev ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v5
+
+    - name: Init ui submodule
+      run: git submodule update --init ui
+
+    # The ui build dominates the run (~6 of ~8 minutes) but only changes when
+    # the submodule pointer does — cache its dist keyed on that exact commit.
+    - name: Compute ui submodule SHA
+      id: uisha
+      run: echo "sha=$(git ls-tree HEAD ui | awk '{print $3}')" >> "$GITHUB_OUTPUT"
+
+    - name: Cache built ui library
+      id: ui-cache
+      uses: actions/cache@v4
+      with:
+        path: ui/dist
+        key: ui-dist-${{ steps.uisha.outputs.sha }}
+
+    - name: Setup Node.js
+      uses: actions/setup-node@v5
+      with:
+        node-version: '22'
+        cache: 'npm'
+
+    # Same rationale as ci.yml: corepack provides the pnpm version pinned in
+    # ui/package.json's "packageManager" field.
+    - name: Enable pnpm (for the ui submodule)
+      if: steps.ui-cache.outputs.cache-hit != 'true'
+      run: corepack enable
+
+    - name: Build @mieweb/ui submodule
+      if: steps.ui-cache.outputs.cache-hit != 'true'
+      run: cd ui && pnpm install --frozen-lockfile && pnpm build
+
+    - name: Install dependencies
+      run: npm install
+
+    - name: Build server
+      run: npm run build:server
+
+    - name: Build client
+      run: npm run build:client
+
+    # The release is everything the container needs at runtime and nothing it
+    # doesn't: built JS + the package manifests to install server prod deps.
+    # ui is a build-time dep only (bundled into client/dist above), so it
+    # stays out of the tarball. artipods/ and .env live in shared/ on the box.
+    - name: Package release
+      run: |
+        mkdir -p out
+        tar -czf "out/pulseclip-dev-${GITHUB_SHA::7}.tar.gz" \
+          package.json package-lock.json \
+          server/package.json server/dist \
+          client/package.json client/dist
+
+    # Rehearse exactly what the box will do: unpack into a clean dir, install
+    # server prod deps from the lockfile, boot, and hit the healthcheck.
+    - name: Smoke test the artifact
+      run: |
+        mkdir -p smoke && tar -xzf out/pulseclip-dev-*.tar.gz -C smoke
+        cd smoke
+        npm ci --omit=dev --workspace=server
+        mkdir -p server/artipods
+        (cd server && node dist/index.js &)
+        timeout 30 bash -c 'until curl -fsS localhost:3000/api/providers; do sleep 1; done'
+        echo "healthcheck OK"
+
+    - name: Upload release artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: pulseclip-dev-${{ github.sha }}
+        path: out/
+        retention-days: 14
+
+    # Ship the smoke-tested tarball to the dev container and install it via
+    # release.sh (symlink-flip + healthcheck + auto-rollback on the box).
+    - name: Deploy to dev container
+      env:
+        DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+        DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        DEPLOY_PORT: ${{ secrets.DEPLOY_PORT }}
+        DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      run: |
+        mkdir -p ~/.ssh
+        printf '%s\n' "$DEPLOY_SSH_KEY" > ~/.ssh/deploy_key
+        chmod 600 ~/.ssh/deploy_key
+        OPTS="-i $HOME/.ssh/deploy_key -o StrictHostKeyChecking=accept-new"
+        TB=$(ls out/pulseclip-dev-*.tar.gz)
+        scp $OPTS -P "$DEPLOY_PORT" "$TB" scripts/deploy/release.sh "$DEPLOY_USER@$DEPLOY_HOST:deploy/"
+        ssh $OPTS -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" \
+          "APP_ROOT=\$HOME/pulseclip-app RESTART_CMD='sudo systemctl restart pulseclip-dev' bash ~/deploy/release.sh ~/deploy/$(basename "$TB")"
+
+    - name: Verify public URL
+      run: curl -fsS --max-time 20 https://pulseclip-dev2.os.mieweb.org/api/providers
