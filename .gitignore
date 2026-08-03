@@ -140,6 +140,7 @@ vite.config.ts.timestamp-*
 
 # Project specific
 server/artipods/
+server/vault-data/
 server/cache/
 server/dist/
 client/dist/
