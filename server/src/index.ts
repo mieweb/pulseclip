@@ -5,7 +5,7 @@ import { randomUUID, createHash } from 'crypto';
 import { execFile } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
-import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, renameSync } from 'fs';
 import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
 import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
@@ -14,6 +14,8 @@ import { createTusRouter, cleanupStaleUploads, findArtipodByChecksum, registerCh
 import { buildExportPlan, buildSrt, renderExport, canBurnSubtitles, EXPORT_FILENAMES } from './export.js';
 import { generateAgentEdit, buildBaseline, resolveAgentConfig, AgentNotConfiguredError, type AgentOp } from './agent.js';
 import { pulseVault, mintPulseCamPairing } from './pulsevault.js';
+import { runHeavyJob } from './queue.js';
+import { PLAYBACK_PROXY, ensurePlaybackProxy } from './playback.js';
 
 // Load environment variables
 dotenv.config();
@@ -80,38 +82,7 @@ const agentLocks = new Map<string, string>();
  * long video and more iterations than anyone reviews in one sitting. Index 0
  * (the original) is exempt from eviction.
  */
-
-
-/**
- * How many agent checkpoints an artipod keeps. Each holds a full copy of the
- * edit list, so this is a disk/history tradeoff — ten is a couple of MB on a
- * long video and more iterations than anyone reviews in one sitting. Index 0
- * (the original) is exempt from eviction.
- */
 const MAX_CHECKPOINTS = 10;
-
-/**
- * Heavy media work (ffmpeg renders, Whisper) runs one job at a time.
- * A single 40-segment render peaks near 2 GB and Whisper's larger models
- * want over 1 GB; the box has 4 GB, so two at once OOM-kill the server and
- * take every other user's work with them. Serializing trades a queue wait
- * for never losing the process. Failures release the lock like successes.
- */
-let heavyJobChain: Promise<unknown> = Promise.resolve();
-function runHeavyJob<T>(label: string, fn: () => Promise<T>): Promise<T> {
-  const started = heavyJobChain.then(
-    () => {
-      console.log(`[queue] running ${label}`);
-      return fn();
-    },
-    () => {
-      console.log(`[queue] running ${label}`);
-      return fn();
-    }
-  );
-  heavyJobChain = started.catch(() => {});
-  return started;
-}
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -387,6 +358,7 @@ app.post('/api/upload', upload.single('file'), (req, res) => {
   // Best-effort poster so the upload gets a card image (fire-and-forget;
   // audio-only files simply fail the frame grab and stay imageless)
   ensureThumbnail(join(__dirname, '../artipods', artipodId), req.file.originalname);
+  ensurePlaybackProxy(join(__dirname, '../artipods', artipodId), req.file.originalname);
 
   const fileUrl = `/artipods/${artipodId}/${req.file.originalname}`;
 
@@ -560,7 +532,7 @@ function findMediaInArtipod(artipodPath: string): string | null {
   // Find the first media file (exclude known asset files, rendered exports,
   // and caption sidecars — PulseCam merged uploads place a .vtt next to the
   // video)
-  const assetFiles = ['thumbnail.png', 'thumbnail.jpg', 'transcript.json', 'beats.json', 'edits.json', ...EXPORT_FILENAMES];
+  const assetFiles = ['thumbnail.png', 'thumbnail.jpg', 'transcript.json', 'beats.json', 'edits.json', PLAYBACK_PROXY, ...EXPORT_FILENAMES];
   const mediaFile = files.find(
     f =>
       !assetFiles.includes(f) &&
@@ -725,8 +697,16 @@ app.get('/api/artipod/:artipodId', (req, res) => {
   
   const mediaPath = join(artipodPath, mediaFile);
   const stats = statSync(mediaPath);
-  const fileUrl = `/artipods/${artipodId}/${mediaFile}`;
-  
+  // Play the web-friendly copy when one exists — phone captures are HEVC with
+  // the index at the end and won't play in most browsers. `filename` still
+  // names the original, so edit and export keep working from the source.
+  // A missing proxy (not built yet, or not needed) just falls back.
+  const playbackFile = existsSync(join(artipodPath, PLAYBACK_PROXY)) ? PLAYBACK_PROXY : mediaFile;
+  const fileUrl = `/artipods/${artipodId}/${playbackFile}`;
+
+  // A capture that arrived before this existed still gets one, on first view.
+  ensurePlaybackProxy(artipodPath, mediaFile);
+
   // Check for thumbnail
   const thumbnailFile = ['thumbnail.png', 'thumbnail.jpg'].find(f =>
     existsSync(join(artipodPath, f))

@@ -10,6 +10,7 @@ import {
   issueCapabilityToken,
   buildUploadLink,
 } from '@mieweb/pulsevault/core';
+import { ensurePlaybackProxy } from './playback.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -99,6 +100,10 @@ async function handleUploadComplete(
     console.log(
       `[VAULT] video ${ctx.artifactId} -> artipod ${ctx.artifactId} (${filename}, ${ctx.size} bytes${title ? `, title "${title}"` : ''})`
     );
+    // Phone captures are the reason the proxy exists: HEVC, ~28 Mbps, index at
+    // the end. Fire-and-forget — it queues behind any render already running,
+    // and playback falls back to the original until it lands.
+    ensurePlaybackProxy(artipodPath, filename);
     return;
   }
 
