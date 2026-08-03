@@ -5,18 +5,18 @@
 ### 1. Installation
 
 ```bash
-git clone <repository-url>
-cd voicepoc-
+git clone https://github.com/mieweb/pulseclip.git
+cd pulseclip
 npm install
 ```
 
 ### 2. Configuration
 
-Create environment file:
+Create the environment file (required — without it the server defaults to port 3000 and
+collides with the client dev server):
 
 ```bash
-cd server
-cp .env.example .env
+cp server/.env.example server/.env
 ```
 
 Edit `server/.env` and add your AssemblyAI API key:
@@ -65,10 +65,10 @@ Open your browser to: http://localhost:3000
 
 ### Transcribe
 
-1. Wait for upload to complete
-2. Select provider from dropdown (currently only AssemblyAI)
-3. Click "Transcribe"
-4. Wait for processing (may take 1-3 minutes depending on file length)
+1. Wait for upload to complete — transcription starts automatically
+2. Wait for processing (may take 1-3 minutes depending on file length; files over
+   100MB are processed in the background and the page polls for the result)
+3. Use the "Transcribe" button to re-run with a different provider or skip the cache
 
 ### Navigate Transcript
 
@@ -110,15 +110,19 @@ Currently disabled in POC. To enable:
 - Check server is running on port 3001
 - Verify ASSEMBLYAI_API_KEY is set in server/.env
 
-### "Transcription failed"
-- Verify API key is valid
+### "Transcription failed" / "Invalid API key"
+- Verify `ASSEMBLYAI_API_KEY` in `server/.env` is a real key (the `.env.example`
+  placeholder will produce "Invalid API key")
 - Check file format is supported
 - Review server logs for details
 
 ### Upload hangs
-- Check file size (must be < 500MB)
 - Verify server is running
 - Check network connectivity
+
+### Featured Pulses show "not found" locally
+- Expected on a fresh install: the featured list references artipods that exist on the
+  deployed server. Media folders (`server/artipods/`) are not checked into git.
 
 ### Port already in use
 Change ports in:
@@ -145,14 +149,12 @@ NODE_ENV=production
 ### Serve
 
 ```bash
-# Start server
-cd server
-npm start
-
-# Serve client (use nginx, apache, or hosting service)
-cd client/dist
-# Serve static files
+# Build both workspaces and start the server
+npm run prod
 ```
+
+The Express server serves the built client from `client/dist` automatically, so no
+separate static host is needed.
 
 ### Recommended Hosting
 
@@ -172,25 +174,30 @@ cd client/dist
 
 ### Direct API Calls
 
-**Upload File:**
+**Upload File** (returns an `artipodId` and the media `url`):
 ```bash
 curl -X POST \
   -F "file=@/path/to/audio.mp3" \
   http://localhost:3001/api/upload
 ```
 
-**Transcribe:**
+**Transcribe** (use the `url` returned by the upload, in the form `/artipods/{artipodId}/{filename}`):
 ```bash
 curl -X POST \
   -H "Content-Type: application/json" \
   -d '{
-    "mediaUrl": "http://localhost:3001/uploads/file.mp3",
+    "mediaUrl": "/artipods/61dd3471-dd98-4ff3-a5ae-27afee3fc8af/audio.mp3",
     "providerId": "assemblyai",
     "options": {
       "speakerLabels": false
     }
   }' \
   http://localhost:3001/api/transcribe
+```
+
+Files over 100MB return `202` with a `jobId` — poll for the result:
+```bash
+curl http://localhost:3001/api/transcribe/status/<jobId>
 ```
 
 **List Providers:**

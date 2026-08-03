@@ -1,7 +1,7 @@
 {
-  "name": "voicepoc",
+  "name": "pulseclip",
   "version": "1.0.0",
-  "description": "Voice transcription POC with pluggable transcription backends",
+  "description": "PulseClip - word-level transcript editing for audio & video, with pluggable transcription backends",
   "private": true,
   "workspaces": [
     "server",

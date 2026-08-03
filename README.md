@@ -83,8 +83,8 @@ pulseclip/
 
 1. Clone the repository:
 ```bash
-git clone <repository-url>
-cd voicepoc-
+git clone https://github.com/mieweb/pulseclip.git
+cd pulseclip
 ```
 
 2. Install dependencies:
@@ -92,11 +92,10 @@ cd voicepoc-
 npm install
 ```
 
-3. Set up environment variables:
+3. Set up environment variables (required — without a `.env` the server defaults to port 3000 and collides with the client dev server):
 ```bash
-cd server
-cp .env.example .env
-# Edit .env and add your ASSEMBLYAI_API_KEY
+cp server/.env.example server/.env
+# Edit server/.env and add your ASSEMBLYAI_API_KEY
 ```
 
 4. Start the development servers:
@@ -113,9 +112,12 @@ This will start:
 
 1. Open http://localhost:3000 in your browser
 2. Drag and drop an audio or video file (or click to browse)
-3. Select "AssemblyAI" from the provider dropdown
-4. Click "Transcribe" and wait for processing
-5. Click any word in the transcript to seek to that timestamp
+3. Transcription starts automatically after upload (or click "Transcribe" to re-run)
+4. Click any word in the transcript to seek to that timestamp
+
+> **Note:** the "Featured Pulses" on the home page reference artipods that live on the
+> deployed server — on a fresh local install those links won't resolve until you upload
+> your own media.
 
 ## Production Authentication and Sharing
 
@@ -341,6 +343,22 @@ Transcribe media file using selected provider.
   "raw": { /* Original provider response */ }
 }
 ```
+
+For files larger than 100MB the server responds `202` with a `jobId` instead and
+transcribes in the background:
+
+```json
+{
+  "success": true,
+  "status": "processing",
+  "jobId": "0b0e...",
+  "message": "This file is large and may take several minutes to transcribe. You can check back shortly."
+}
+```
+
+### GET /api/transcribe/status/:jobId
+Poll an async transcription job. Returns `{ "status": "processing" }` until done, then
+the same payload as a synchronous transcription (or `{ "status": "error", ... }`).
 
 ## Normalized Transcript Schema
 
