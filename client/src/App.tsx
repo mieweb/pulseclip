@@ -1042,7 +1042,7 @@ function App() {
 
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.error || `AI edit failed (${response.status})`);
+        throw new Error(data.message || data.error || `AI edit failed (${response.status})`);
       }
 
       const { jobId } = await response.json();
