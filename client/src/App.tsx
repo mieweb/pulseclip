@@ -1606,34 +1606,6 @@ function App() {
                 <>
                   <Button
                     size="sm"
-                    variant="ghost"
-                    onClick={() => handleRestore(historyIndex - 1)}
-                    disabled={!canUndoVersion || restoringIndex !== null}
-                    title={
-                      canUndoVersion
-                        ? `Undo: back to "${checkpoints[historyIndex - 1]?.label ?? ''}"`
-                        : 'Nothing to undo'
-                    }
-                    aria-label="Undo to the previous version"
-                  >
-                    ↶ Undo
-                  </Button>
-                  <Button
-                    size="sm"
-                    variant="ghost"
-                    onClick={() => handleRestore(historyIndex + 1)}
-                    disabled={!canRedoVersion || restoringIndex !== null}
-                    title={
-                      canRedoVersion
-                        ? `Redo: forward to "${checkpoints[historyIndex + 1]?.label ?? ''}"`
-                        : 'Nothing to redo'
-                    }
-                    aria-label="Redo to the next version"
-                  >
-                    ↷ Redo
-                  </Button>
-                  <Button
-                    size="sm"
                     variant={showHistoryPanel ? 'secondary' : 'ghost'}
                     onClick={() => setShowHistoryPanel((v) => !v)}
                     title="Review, compare, or roll back to an earlier version"
@@ -1789,6 +1761,15 @@ function App() {
                 onCursorTimestampChange={setCursorTimestampMs}
                 onEditedWordsRender={handleEditedWordsRender}
                 onSpeedStateChange={handleSpeedStateChange}
+                // The editor's Undo is word-level and runs out; these let the
+                // same control keep going into the version timeline rather than
+                // putting a second Undo somewhere else on screen.
+                canUndoBeyond={canUndoVersion && restoringIndex === null}
+                onUndoBeyond={() => handleRestore(historyIndex - 1)}
+                undoBeyondLabel={checkpoints[historyIndex - 1]?.label}
+                canRedo={canRedoVersion && restoringIndex === null}
+                onRedo={() => handleRestore(historyIndex + 1)}
+                redoLabel={checkpoints[historyIndex + 1]?.label}
                 playerRef={playerRef}
               />
             </div>
