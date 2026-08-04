@@ -1978,8 +1978,16 @@ function App() {
                 canUndoBeyond={canUndoVersion && restoringIndex === null}
                 onUndoBeyond={() => handleRestore(historyIndex - 1)}
                 undoBeyondLabel={checkpoints[historyIndex - 1]?.label}
+                // Only offered once this pulse actually has versions to move
+                // between — the same gate as the History button. Before that
+                // there is nothing to redo, and a permanently greyed control
+                // reads as broken rather than inapplicable.
                 canRedo={canRedoVersion && restoringIndex === null}
-                onRedo={() => handleRestore(historyIndex + 1)}
+                onRedo={
+                  checkpoints.length > 1
+                    ? () => handleRestore(historyIndex + 1)
+                    : undefined
+                }
                 redoLabel={checkpoints[historyIndex + 1]?.label}
                 playerRef={playerRef}
               />
