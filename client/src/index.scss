@@ -11,12 +11,17 @@ html, body {
   -moz-osx-font-smoothing: grayscale;
 }
 
-// Prevent page scroll when in split view mode
-html.split-view-active,
-html.split-view-active body {
-  overflow: hidden;
-  height: 100%;
-  overscroll-behavior: none;
+// Prevent page scroll when in split view mode.
+//
+// Only on pointer-sized screens: on a phone the split layout is taller than the viewport,
+// and locking the document meant the lower half of the editor could not be reached at all.
+@media (min-width: 768px) {
+  html.split-view-active,
+  html.split-view-active body {
+    overflow: hidden;
+    height: 100%;
+    overscroll-behavior: none;
+  }
 }
 
 code {
