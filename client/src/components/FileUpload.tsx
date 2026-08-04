@@ -1,6 +1,7 @@
 import type { FC, ChangeEvent, DragEvent } from 'react';
-import { useState, useCallback, useRef } from 'react';
+import { useState, useCallback } from 'react';
 import { inspectMediaFile, type ContractReport } from '../lib/videoContract';
+import type { TranscodeProgress } from '../lib/transcodeToContract';
 import { UploadContractWarning } from './UploadContractWarning';
 import './FileUpload.scss';
 
@@ -20,8 +21,7 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, onInspected, d
   const [uploading, setUploading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [contractReport, setContractReport] = useState<ContractReport | null>(null);
-  /** Guards against a slow inspection of an earlier file landing last. */
-  const inspectionSeq = useRef(0);
+  const [converting, setConverting] = useState<TranscodeProgress | null>(null);
 
   const handleDragOver = useCallback((e: DragEvent) => {
     e.preventDefault();
@@ -35,35 +35,52 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, onInspected, d
   }, []);
 
   /**
-   * Inspect the file against the upload contract.
+   * Bring the picked file into the upload contract, or explain why we couldn't.
    *
-   * Deliberately NOT awaited by the caller: it runs alongside the upload so
-   * it never delays it, and a violation only ever produces a warning.
+   * Returns the file to actually upload. Inspection runs BEFORE the transfer rather than
+   * alongside it (as it did when this only produced a warning) — we cannot convert a file we
+   * have already started sending. It costs a few ranged reads, not a full pass.
+   *
+   * Conversion failing is not an upload failure: we fall back to the original bytes and leave
+   * the warning on screen, which is the detect-and-warn behaviour.
    */
-  const inspect = (file: File) => {
-    const seq = ++inspectionSeq.current;
-    inspectMediaFile(file)
-      .then((report) => {
-        if (seq !== inspectionSeq.current) return;
-        setContractReport(report.ok ? null : report);
-        // Reported either way so the parent can clear a stale warning from
-        // a previous upload.
-        onInspected?.(report, file);
-      })
-      .catch(() => {
-        // Inspection is advisory; a failure must never affect the upload.
+  const conditionFile = async (file: File): Promise<File> => {
+    const report = await inspectMediaFile(file).catch(() => null);
+    if (!report) return file;
+    onInspected?.(report, file);
+    if (report.ok) {
+      setContractReport(null);
+      return file;
+    }
+    setContractReport(report);
+    try {
+      // Loaded on demand: the demuxer and muxer are ~220KB, and a visitor who never drops a
+      // non-compliant file should never pay for them.
+      const { transcodeToContract } = await import('../lib/transcodeToContract');
+      const converted = await transcodeToContract(file, {
+        onProgress: (progress) => setConverting(progress),
       });
+      // It now meets the contract, so there is nothing left to warn about.
+      setContractReport(null);
+      onInspected?.({ ...report, violations: [], ok: true, headline: null }, converted);
+      return converted;
+    } catch {
+      // Unsupported browser, an undecodable source, or a file too large to convert here.
+      return file;
+    } finally {
+      setConverting(null);
+    }
   };
 
   const uploadFile = async (file: File) => {
     setUploading(true);
     setError(null);
     setContractReport(null);
-    inspect(file);
 
     try {
+      const toUpload = await conditionFile(file);
       const formData = new FormData();
-      formData.append('file', file);
+      formData.append('file', toUpload);
 
       const response = await fetch('/api/upload', {
         method: 'POST',
@@ -113,7 +130,11 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, onInspected, d
         {uploading ? (
           <div className="file-upload__status">
             <div className="file-upload__spinner"></div>
-            <p>Uploading...</p>
+            <p>
+              {converting
+                ? `Converting for phone playback… ${Math.round(converting.ratio * 100)}%`
+                : 'Uploading...'}
+            </p>
           </div>
         ) : (
           <>
