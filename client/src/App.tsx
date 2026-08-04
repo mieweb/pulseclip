@@ -1095,8 +1095,9 @@ function App() {
    * its own. In between — while there are still word-level steps to take — the
    * event falls through untouched, so fine-grained undo keeps working.
    *
-   * ⌘Y and ⌘⇧Z always redo. The editor has no redo of its own, so this is
-   * purely additive.
+   * Redo is ⌘⇧Z. ⌘Y is accepted too for people coming from Windows, but it is
+   * NOT advertised: on macOS Chrome ⌘Y opens the browser's own History, and the
+   * browser wins — pressing it in the app opens a tab instead of redoing.
    */
   useEffect(() => {
     if (viewState !== 'viewing') return;
