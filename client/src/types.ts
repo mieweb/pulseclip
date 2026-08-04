@@ -1,9 +1,9 @@
 /**
  * PulseClip app types.
  *
- * The transcript schema lives in ./ui-staging/types/transcript (staged for
- * @mieweb/ui) and is re-exported here so existing app imports keep working.
- * Only app-specific types (server API shapes) are defined below.
+ * The transcript schema lives in @mieweb/ui (TranscriptView) and is
+ * re-exported here so existing app imports keep working. Only app-specific
+ * types (server API shapes) are defined below.
  */
 export type {
   WordType,
@@ -15,10 +15,10 @@ export type {
   PlaybackSegment,
   PlaybackSpeed,
   SpeedMarker,
-} from './ui-staging/types/transcript';
-export { PLAYBACK_SPEEDS } from './ui-staging/types/transcript';
+} from '@mieweb/ui/components/TranscriptView';
+export { PLAYBACK_SPEEDS } from '@mieweb/ui/components/TranscriptView';
 
-import type { Transcript } from './ui-staging/types/transcript';
+import type { Transcript } from '@mieweb/ui/components/TranscriptView';
 
 export interface Provider {
   id: string;
