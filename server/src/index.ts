@@ -11,7 +11,14 @@ import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, 
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
 import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
 import { buildExportPlan, buildSrt, renderExport, canBurnSubtitles, EXPORT_FILENAMES } from './export.js';
-import { generateAgentEdit, buildBaseline, AgentNotConfiguredError, type AgentOp } from './agent.js';
+import {
+  generateAgentEdit,
+  buildBaseline,
+  parseByoConfig,
+  AgentNotConfiguredError,
+  type AgentOp,
+  type AgentConfig,
+} from './agent.js';
 import {
   diffCheckpoints,
   describeChanges,
@@ -103,6 +110,32 @@ const providerRegistry = initializeProviders();
 const secretKey = process.env.SECRET_KEY;
 
 // Auth middleware for protected endpoints
+/**
+ * The agent is the one participation route that stays key-gated, because a
+ * model call spends money or burns a shared rate limit — unlike CPU work, which
+ * only costs this box some time.
+ *
+ * That reasoning does not apply to a caller spending their OWN account. When a
+ * request carries a complete provider of its own, the shared budget is not at
+ * stake and the app key is not required. Anything else this endpoint touches
+ * (the artipod, its edits) is already writable through the open edit routes, so
+ * this widens who can spend an LLM budget, not what they can reach.
+ */
+const requireAuthUnlessOwnKey: express.RequestHandler = (req, res, next) => {
+  const attempted =
+    !!req.body?.agent &&
+    typeof req.body.agent === 'object' &&
+    Object.values(req.body.agent).some((v) => typeof v === 'string' && v.trim());
+  // A caller who tried to bring their own provider gets the route either way:
+  // if it validates they are spending their own budget, and if it does not the
+  // route answers with the actual reason. Answering "valid API key required" to
+  // a mistyped base URL sends someone to fix the wrong thing entirely — and the
+  // route rejects a bad provider before doing any work, so nothing is reachable
+  // through here that the open edit routes do not already expose.
+  if (attempted) return next();
+  return requireAuth(req, res, next);
+};
+
 const requireAuth: express.RequestHandler = (req, res, next) => {
   if (!secretKey) {
     // No secret key configured, allow all requests
@@ -902,12 +935,26 @@ app.get('/api/export/status/:jobId', (req, res) => {
 // edits.json for the human to review in the editor — NEVER auto-exported. The
 // prior editor state is kept as a single undo snapshot, and saved speed
 // settings are preserved. Always async — returns 202 + jobId for polling.
-app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
+app.post('/api/artipod/:artipodId/agent-edit', requireAuthUnlessOwnKey, (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
 
   if (!existsSync(artipodPath)) {
     return res.status(404).json({ error: 'Artipod not found' });
+  }
+
+  // A caller may bring their own LLM account. Validated here so a bad provider
+  // fails immediately with a readable message rather than 120 seconds later
+  // inside the job. Never logged, never written to edits.json — it lives only
+  // for the duration of this request.
+  let byoConfig: AgentConfig | null = null;
+  try {
+    byoConfig = parseByoConfig(req.body?.agent);
+  } catch (err) {
+    return res.status(400).json({
+      error: 'Provider rejected',
+      message: err instanceof Error ? err.message : 'Could not use that provider.',
+    });
   }
 
   const words = req.body?.words;
@@ -978,6 +1025,8 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
               durationMs: lastAgentRun.durationMs,
             }
           : undefined,
+      // Present only when the caller brought their own account.
+      config: byoConfig ?? undefined,
     });
 
     // Two histories, different jobs. undoStack is the editor's ⌘Z — fine-grained

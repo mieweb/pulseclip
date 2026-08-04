@@ -162,6 +162,109 @@ export interface AgentConfig {
 /** Thrown when no LLM is configured (e.g. on the box before a key is seeded) */
 export class AgentNotConfiguredError extends Error {}
 
+/** Thrown when a caller-supplied provider is malformed or points somewhere unsafe */
+export class AgentConfigRejectedError extends Error {}
+
+/**
+ * Hostnames a caller must not be able to aim this server at.
+ *
+ * A caller-supplied base URL means WE make the outbound request, with our
+ * network position — the classic SSRF shape. Blocking loopback, link-local and
+ * the private ranges keeps a bring-your-own-key field from becoming a probe for
+ * whatever else is reachable from the box.
+ *
+ * A hostname that RESOLVES into one of these ranges still gets through; closing
+ * that needs resolution at connect time, which the platform fetch does not
+ * expose. Requiring https narrows it — the response is never returned to the
+ * caller verbatim, only parsed as an LLM reply — but it is not nothing, and is
+ * the reason this list is a floor rather than the whole defence.
+ */
+function isBlockedHost(hostname: string): boolean {
+  const h = hostname.toLowerCase().replace(/^\[|\]$/g, '');
+  if (h === 'localhost' || h.endsWith('.localhost') || h.endsWith('.internal')) return true;
+  if (h === '::1' || h === '0.0.0.0' || h === '::') return true;
+  // Unique-local and link-local IPv6
+  if (/^f[cd][0-9a-f]{2}:/.test(h) || /^fe80:/.test(h)) return true;
+  const v4 = h.match(/^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    if (a === 127 || a === 10 || a === 0) return true;
+    if (a === 169 && b === 254) return true; // link-local, incl. cloud metadata
+    if (a === 172 && b >= 16 && b <= 31) return true;
+    if (a === 192 && b === 168) return true;
+  }
+  return false;
+}
+
+/** The shape a client may send to use its own LLM account. */
+export interface ByoAgentConfig {
+  provider?: unknown;
+  base?: unknown;
+  apiKey?: unknown;
+  model?: unknown;
+}
+
+/**
+ * Validate a caller-supplied provider.
+ *
+ * Returns null when the caller sent nothing — that is the ordinary case and
+ * means "use the server's own configuration". Throws only when they sent
+ * something that cannot be honoured, so a typo produces a clear message rather
+ * than a silent fallback onto the shared key they were trying not to spend.
+ */
+export function parseByoConfig(raw: unknown): AgentConfig | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const { provider, base, apiKey, model } = raw as ByoAgentConfig;
+  if (!provider && !base && !apiKey && !model) return null;
+
+  const p = String(provider || '').toLowerCase();
+  if (p !== 'anthropic' && p !== 'openai') {
+    throw new AgentConfigRejectedError(
+      "provider must be 'anthropic' or 'openai' (OpenAI-compatible covers Groq, OpenRouter, vLLM, …)."
+    );
+  }
+  const key = typeof apiKey === 'string' ? apiKey.trim() : '';
+  if (!key) {
+    throw new AgentConfigRejectedError('An API key is required to use your own provider.');
+  }
+  const name = typeof model === 'string' ? model.trim() : '';
+  if (!name) {
+    throw new AgentConfigRejectedError('A model name is required.');
+  }
+
+  const rawBase =
+    typeof base === 'string' && base.trim()
+      ? base.trim()
+      : p === 'anthropic'
+        ? 'https://api.anthropic.com'
+        : '';
+  if (!rawBase) {
+    throw new AgentConfigRejectedError('A base URL is required for an OpenAI-compatible provider.');
+  }
+  let url: URL;
+  try {
+    url = new URL(rawBase);
+  } catch {
+    throw new AgentConfigRejectedError(`Could not read "${rawBase}" as a URL.`);
+  }
+  if (url.protocol !== 'https:') {
+    throw new AgentConfigRejectedError(
+      'The base URL must be https — the key travels on it.'
+    );
+  }
+  if (isBlockedHost(url.hostname)) {
+    throw new AgentConfigRejectedError(
+      `Refusing to call ${url.hostname}: this server will not proxy to private or loopback addresses.`
+    );
+  }
+  return {
+    provider: p,
+    base: rawBase.replace(/\/+$/, ''),
+    apiKey: key,
+    model: name,
+  };
+}
+
 /**
  * Resolves the LLM provider from env. Explicit AGENT_PROVIDER wins; otherwise an
  * AGENT_API_KEY implies Anthropic and an AGENT_API_BASE implies an
@@ -732,6 +835,12 @@ export async function generateAgentEdit(opts: {
   defaultSpeed?: number;
   /** The previous run on this artipod, so a follow-up instruction has context */
   prior?: PriorTurn;
+  /**
+   * A caller's own LLM account, already validated. When present it is used
+   * instead of the server's configuration, so the request spends their quota
+   * rather than the shared one.
+   */
+  config?: AgentConfig;
 }): Promise<AgentEditResult> {
   const { words, prior } = opts;
   const instructions = (opts.instructions || '').trim();
@@ -741,7 +850,7 @@ export async function generateAgentEdit(opts: {
     throw new Error('Tell the agent what to do — an instruction is required.');
   }
 
-  const config = resolveAgentConfig();
+  const config = opts.config ?? resolveAgentConfig();
   const { content } = prepare(words);
   const cap = Math.floor(content.length * MAX_DELETE_FRACTION);
   const spokenMs = Math.max(0, words[words.length - 1].endMs - words[0].startMs);

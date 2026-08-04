@@ -20,6 +20,14 @@ import { EditHistoryPanel, type CheckpointMeta } from './components/EditHistoryP
 import { rasterizeLowerThird } from './lib/rasterize';
 import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord, SpeedMarker, PlaybackSpeed } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
+import {
+  loadAgentProvider,
+  saveAgentProvider,
+  clearAgentProvider,
+  maskKey,
+  PROVIDER_PRESETS,
+  type AgentProvider,
+} from './lib/agentProvider';
 import './App.scss';
 
 type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
@@ -126,6 +134,18 @@ function App() {
   // than by counting ⌘Z presses, and `historyIndex` is the undo/redo cursor.
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [agentInstructions, setAgentInstructions] = useState('');
+  // A caller's own LLM account, held in this browser only. When set, agent runs
+  // spend their quota instead of the shared one — and the server stops requiring
+  // the app key, because the shared budget is no longer at stake.
+  const [agentProvider, setAgentProvider] = useState<AgentProvider | null>(() => loadAgentProvider());
+  const [showProviderForm, setShowProviderForm] = useState(false);
+  const [providerDraft, setProviderDraft] = useState<AgentProvider>(() => ({
+    provider: 'openai',
+    base: PROVIDER_PRESETS[0].base,
+    model: PROVIDER_PRESETS[0].model,
+    apiKey: '',
+  }));
+  const [providerPreset, setProviderPreset] = useState(PROVIDER_PRESETS[0].id);
   const [checkpoints, setCheckpoints] = useState<CheckpointMeta[]>([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   /** How many word-level undo steps the editor still holds. Lets ⌘Z hand over
@@ -949,6 +969,8 @@ function App() {
 
   const openAgentModal = () => {
     if (agentStatus === 'running') return;
+    // With no provider at all, the useful thing to show first is how to add one.
+    setShowProviderForm(!agentAvailable && !agentProvider);
     setShowAgentModal(true);
   };
 
@@ -1119,11 +1141,15 @@ function App() {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
-        body: JSON.stringify(
-          instructions?.trim() ? { words, instructions: instructions.trim() } : { words }
-        ),
+        body: JSON.stringify({
+          words,
+          ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
+          // Sent per request and never stored server-side. Its presence is also
+          // what tells the server the shared budget is not being spent.
+          ...(agentProvider ? { agent: agentProvider } : {}),
+        }),
       });
 
       if (response.status === 401) {
@@ -1177,6 +1203,16 @@ function App() {
     setPendingApiKey('');
   };
 
+  // Render API Key Modal
+  /**
+   * Whether the SERVER has a provider of its own. This branch has no
+   * /api/about probe for it — the dev branch adds one — so it is assumed
+   * present and a run that has none fails with the server's own message.
+   */
+  const agentAvailable = true;
+  /** A run needs a provider — this server's, or one this browser supplied. */
+  const canRunAgent = agentAvailable || !!agentProvider;
+
   const renderAgentModal = () => (
     <Modal open={showAgentModal} onOpenChange={(open) => !open && setShowAgentModal(false)} size="sm">
       <ModalHeader>
@@ -1198,14 +1234,142 @@ function App() {
             helperText="Silent gaps come out automatically. Use ✂️ for fine-grained cleanup."
             rows={3}
             autoFocus
+            disabled={!canRunAgent}
           />
+
+          {/* Which account pays for the run. The shared lane is rate-limited and
+              billed to whoever runs this server, so anyone doing real work can
+              point it at their own instead. */}
+          <div className="rounded-lg border border-border p-2.5">
+            {!showProviderForm ? (
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 text-xs">
+                  {agentProvider ? (
+                    <>
+                      <span className="font-medium">Your own account</span>
+                      <span className="text-muted-foreground">
+                        {' '}· {agentProvider.model} · {maskKey(agentProvider.apiKey)}
+                      </span>
+                    </>
+                  ) : agentAvailable ? (
+                    <>
+                      <span className="font-medium">Shared AI</span>
+                      <span className="text-muted-foreground">
+                        {' '}· free, but rate-limited across everyone using it
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium">No AI configured</span>
+                      <span className="text-muted-foreground">
+                        {' '}· this server has no provider, so add your own to use AI edits
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <Button size="sm" variant="ghost" onClick={() => setShowProviderForm(true)}>
+                    {agentProvider ? 'Change' : 'Use my own key'}
+                  </Button>
+                  {agentProvider && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => { clearAgentProvider(); setAgentProvider(null); }}
+                      title="Forget this key and go back to the shared AI"
+                    >
+                      Forget
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p className="m-0 text-xs text-muted-foreground">
+                  Your key stays in this browser. It is sent with the request that uses
+                  it and never saved on the server or into the pulse.
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {PROVIDER_PRESETS.map((preset) => (
+                    <Button
+                      key={preset.id}
+                      size="sm"
+                      variant={providerPreset === preset.id ? 'secondary' : 'ghost'}
+                      onClick={() => {
+                        setProviderPreset(preset.id);
+                        setProviderDraft((d) => ({
+                          ...d,
+                          provider: preset.provider,
+                          base: preset.base,
+                          model: preset.model,
+                        }));
+                      }}
+                    >
+                      {preset.label}
+                    </Button>
+                  ))}
+                </div>
+                {PROVIDER_PRESETS.find((p) => p.id === providerPreset)?.hint && (
+                  <p className="m-0 text-xs text-muted-foreground">
+                    {PROVIDER_PRESETS.find((p) => p.id === providerPreset)?.hint}
+                  </p>
+                )}
+                {providerPreset === 'custom' && (
+                  <Input
+                    label="Base URL"
+                    value={providerDraft.base}
+                    onChange={(e) => setProviderDraft((d) => ({ ...d, base: e.target.value }))}
+                    placeholder="https://…/v1"
+                  />
+                )}
+                <Input
+                  label="Model"
+                  value={providerDraft.model}
+                  onChange={(e) => setProviderDraft((d) => ({ ...d, model: e.target.value }))}
+                  placeholder="openai/gpt-oss-120b"
+                />
+                <Input
+                  label="API key"
+                  type="password"
+                  value={providerDraft.apiKey}
+                  onChange={(e) => setProviderDraft((d) => ({ ...d, apiKey: e.target.value }))}
+                  placeholder="sk-…"
+                />
+                <div className="flex justify-end gap-1">
+                  <Button size="sm" variant="ghost" onClick={() => setShowProviderForm(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={!providerDraft.apiKey.trim() || !providerDraft.model.trim()}
+                    onClick={() => {
+                      const next = {
+                        ...providerDraft,
+                        base: providerDraft.base.trim(),
+                        model: providerDraft.model.trim(),
+                        apiKey: providerDraft.apiKey.trim(),
+                      };
+                      saveAgentProvider(next);
+                      setAgentProvider(next);
+                      setShowProviderForm(false);
+                    }}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </ModalBody>
       <ModalFooter>
         <Button variant="ghost" onClick={() => setShowAgentModal(false)}>
           Cancel
         </Button>
-        <Button onClick={handleAgentConfirm} disabled={!agentInstructions.trim()}>
+        <Button
+          onClick={handleAgentConfirm}
+          disabled={!agentInstructions.trim() || !canRunAgent}
+        >
           ✨ AI edit
         </Button>
       </ModalFooter>
@@ -1595,7 +1759,7 @@ function App() {
                 onClick={openAgentModal}
                 isLoading={agentStatus === 'running'}
                 loadingText="AI editing…"
-                title="Tell the AI what to cut, or let it clean up fillers and dead air"
+                title="Tell the AI what to cut, reorder, or speed up"
                 aria-label="AI edit transcript"
               >
                 {agentStatus === 'success' ? 'AI edited ✓' :
