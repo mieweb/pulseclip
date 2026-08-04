@@ -311,6 +311,42 @@
   display: none;
 }
 
+// The history panel sits beside the editor, so a version and the live timeline
+// are on screen together — comparing them is the whole point, and a modal would
+// cover the thing being compared against.
+.app__content--with-history {
+  flex-direction: row;
+
+  .app__editor-pane {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
+.app__history-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 clamp(20rem, 26vw, 26rem);
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--color-border, rgb(var(--border)));
+  background: var(--color-card, transparent);
+}
+
+// Below the split point the two panes cannot both be usable, so the panel
+// stacks under the editor and takes a bounded slice rather than crushing it.
+@media (max-width: 60rem) {
+  .app__content--with-history {
+    flex-direction: column;
+
+    .app__history-pane {
+      flex: 0 0 min(50%, 22rem);
+      border-left: none;
+      border-top: 1px solid var(--color-border, rgb(var(--border)));
+    }
+  }
+}
+
 .app__media-pane {
   flex-shrink: 0;
   display: flex;

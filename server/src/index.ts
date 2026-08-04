@@ -16,6 +16,14 @@ import { generateAgentEdit, buildBaseline, resolveAgentConfig, AgentNotConfigure
 import { pulseVault, mintPulseCamPairing } from './pulsevault.js';
 import { runHeavyJob } from './queue.js';
 import { PLAYBACK_PROXY, ensurePlaybackProxy } from './playback.js';
+import {
+  diffCheckpoints,
+  describeChanges,
+  checkpointKind,
+  recordManualEdit,
+  clampIndex,
+  type Checkpoint,
+} from './history.js';
 
 // Load environment variables
 dotenv.config();
@@ -77,12 +85,14 @@ const agentJobs = new Map<string, AgentJob>();
 const agentLocks = new Map<string, string>();
 
 /**
- * How many agent checkpoints an artipod keeps. Each holds a full copy of the
- * edit list, so this is a disk/history tradeoff — ten is a couple of MB on a
- * long video and more iterations than anyone reviews in one sitting. Index 0
- * (the original) is exempt from eviction.
+ * How many checkpoints an artipod keeps. Each holds a full copy of the edit
+ * list, so this is a disk/history tradeoff — roughly 90KB per entry on a
+ * three-minute video. Raised from ten when hand edits joined the same timeline:
+ * they are far more frequent than agent runs, and a cap that only ever held a
+ * morning's worth of manual work would evict the AI runs people came back for.
+ * Index 0 (the original) is exempt from eviction.
  */
-const MAX_CHECKPOINTS = 10;
+const MAX_CHECKPOINTS = 25;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
@@ -769,18 +779,57 @@ app.get('/api/artipod/:artipodId/edits', (req, res) => {
   try {
     const editsData = readFileSync(editsPath, 'utf-8');
     const edits = JSON.parse(editsData);
-    res.json({ success: true, hasEdits: true, ...edits });
+    // Checkpoints carry a full copy of the edit list each, which on a long
+    // video runs to hundreds of KB per entry. The client needs their words only
+    // when previewing a diff or restoring, both of which have their own route,
+    // so the listing here is metadata.
+    const checkpoints = Array.isArray(edits.checkpoints) ? edits.checkpoints : [];
+    res.json({
+      success: true,
+      hasEdits: true,
+      ...edits,
+      checkpoints: checkpoints.map((cp: Checkpoint, i: number) => summarizeCheckpoint(cp, i)),
+      historyIndex: clampIndex(edits.historyIndex, checkpoints),
+    });
   } catch (error) {
     console.error('Failed to read edits:', error);
     res.status(500).json({ error: 'Failed to read editor state' });
   }
 });
 
+/** A checkpoint without its payload — everything the history list renders. */
+function summarizeCheckpoint(cp: Checkpoint, index: number) {
+  return {
+    index,
+    at: cp.at,
+    label: cp.label,
+    kind: checkpointKind(cp, index),
+    summary: cp.summary,
+    renamed: !!cp.renamed,
+    opCount: Array.isArray(cp.ops) ? cp.ops.length : undefined,
+    durationMs: cp.durationMs,
+    wordCount: Array.isArray(cp.editedWords)
+      ? cp.editedWords.filter((w) => !w.deleted).length
+      : undefined,
+  };
+}
+
+/** Read edits.json, or null when it is missing or unreadable. */
+function readEdits(artipodId: string): any | null {
+  const editsPath = join(__dirname, '../artipods', artipodId, 'edits.json');
+  if (!existsSync(editsPath)) return null;
+  try {
+    return JSON.parse(readFileSync(editsPath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
 // Save editor state (protected). Fields not sent keep their saved values, so
 // a speed-only save cannot clobber the undo history and vice versa.
 app.put('/api/artipod/:artipodId/edits', (req, res) => {
   const { artipodId } = req.params;
-  const { editedWords, undoStack, speedMarkers, defaultSpeed, savedAt } = req.body;
+  const { editedWords, undoStack, speedMarkers, defaultSpeed, savedAt, recordHistory } = req.body;
 
   const artipodPath = join(__dirname, '../artipods', artipodId);
 
@@ -800,18 +849,55 @@ app.put('/api/artipod/:artipodId/edits', (req, res) => {
         existing = JSON.parse(readFileSync(editsPath, 'utf-8'));
       } catch { /* corrupt file: overwrite */ }
     }
+    const nextSpeedMarkers = speedMarkers ?? existing.speedMarkers ?? [];
+    const nextDefaultSpeed = defaultSpeed ?? existing.defaultSpeed ?? 1;
+
+    // Hand edits join the same timeline as agent runs, but a version per
+    // keystroke would bury the runs people actually look for. A burst of edits
+    // coalesces into one entry, labelled by what it changed. Returns null when
+    // nothing changed — the editor saves on a debounce and on load, so most
+    // calls through here are no-ops.
+    // A save can also be the editor rebuilding itself against a fresh
+    // transcript, which the client flags. That is not an edit anyone made, and
+    // its words are indexed against a different baseline, so diffing it against
+    // the previous version would describe a change that never happened.
+    const recorded =
+      recordHistory === false
+        ? null
+        : recordManualEdit({
+            existing,
+            editedWords,
+            speedMarkers: nextSpeedMarkers,
+            defaultSpeed: nextDefaultSpeed,
+            now: new Date(),
+            maxCheckpoints: MAX_CHECKPOINTS,
+          });
+
     const editsData = {
       editedWords,
       undoStack: undoStack ?? existing.undoStack ?? [],
-      speedMarkers: speedMarkers ?? existing.speedMarkers ?? [],
-      defaultSpeed: defaultSpeed ?? existing.defaultSpeed ?? 1,
+      speedMarkers: nextSpeedMarkers,
+      defaultSpeed: nextDefaultSpeed,
+      checkpoints: recorded ? recorded.checkpoints : existing.checkpoints ?? [],
+      historyIndex: recorded
+        ? recorded.historyIndex
+        : clampIndex(existing.historyIndex, existing.checkpoints ?? []),
       savedAt: savedAt || new Date().toISOString(),
     };
 
     writeFileSync(editsPath, JSON.stringify(editsData, null, 2));
     console.log(`Saved edits for artipod ${artipodId}: ${editedWords.length} words, ${editsData.undoStack.length} undo states, ${editsData.speedMarkers.length} speed markers`);
+    if (recorded) {
+      const tip = recorded.checkpoints[recorded.historyIndex];
+      console.log(`  checkpoint ${recorded.historyIndex} ("${tip?.label}")`);
+    }
 
-    res.json({ success: true, savedAt: editsData.savedAt });
+    res.json({
+      success: true,
+      savedAt: editsData.savedAt,
+      historyIndex: editsData.historyIndex,
+      checkpointCount: editsData.checkpoints.length,
+    });
   } catch (error) {
     console.error('Failed to save edits:', error);
     res.status(500).json({ error: 'Failed to save editor state' });
@@ -1023,12 +1109,16 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
       typeof existing.defaultSpeed === 'number' ? existing.defaultSpeed : 1;
 
     // Hand the model its own last turn so a follow-up ("now make it shorter")
-    // is a revision rather than a fresh guess. Checkpoint 0 is the untouched
-    // original, so only a later one describes something the agent did.
-    const lastAgentRun =
-      Array.isArray(existing.checkpoints) && existing.checkpoints.length > 1
-        ? existing.checkpoints[existing.checkpoints.length - 1]
-        : null;
+    // is a revision rather than a fresh guess. Search back for the last AI run
+    // rather than taking the tail: hand edits share this timeline now, so the
+    // most recent checkpoint is often not one the agent produced.
+    const lastAgentRun: Checkpoint | null = (() => {
+      const all: Checkpoint[] = Array.isArray(existing.checkpoints) ? existing.checkpoints : [];
+      for (let i = all.length - 1; i > 0; i--) {
+        if (checkpointKind(all[i], i) === 'ai') return all[i];
+      }
+      return null;
+    })();
 
     const result = await generateAgentEdit({
       words,
@@ -1049,20 +1139,30 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
     // the instruction that produced it, holding the COMPLETE state. Word-only
     // snapshots would silently lose speed and ordering once ops can change them,
     // leaving a mixed state that never existed.
-    const priorCheckpoints = Array.isArray(existing.checkpoints) ? existing.checkpoints : [];
-    const checkpoints = [...priorCheckpoints];
+    const priorCheckpoints: Checkpoint[] = Array.isArray(existing.checkpoints)
+      ? existing.checkpoints
+      : [];
+    let checkpoints = [...priorCheckpoints];
     if (checkpoints.length === 0) {
       checkpoints.push({
         at: existing.savedAt || new Date().toISOString(),
         label: 'Before AI edits',
+        kind: 'original',
         editedWords: priorEditedWords,
         speedMarkers: priorSpeedMarkers,
         defaultSpeed: priorDefaultSpeed,
       });
+    } else {
+      // Running the agent while rewound abandons the versions ahead, exactly as
+      // a hand edit does — otherwise redo would offer a future from a lineage
+      // this run just replaced.
+      const cursor = clampIndex(existing.historyIndex, checkpoints);
+      if (cursor < checkpoints.length - 1) checkpoints = checkpoints.slice(0, cursor + 1);
     }
     checkpoints.push({
       at: new Date().toISOString(),
       label: instructions,
+      kind: 'ai',
       summary: result.summary,
       ops: result.ops,
       // Persisted so the next run can be told how long its own last edit ran
@@ -1073,7 +1173,11 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
     });
     // Cap the history, but never drop the original — it is the one people
     // reach for when an iteration goes wrong.
-    while (checkpoints.length > MAX_CHECKPOINTS) checkpoints.splice(1, 1);
+    let historyIndex = checkpoints.length - 1;
+    while (checkpoints.length > MAX_CHECKPOINTS) {
+      checkpoints.splice(1, 1);
+      historyIndex--;
+    }
 
     const editsData = {
       editedWords: result.editedWords,
@@ -1081,6 +1185,7 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuth, (req, res) => {
       speedMarkers: result.speedMarkers,
       defaultSpeed: priorDefaultSpeed,
       checkpoints,
+      historyIndex,
       savedAt: new Date().toISOString(),
     };
     writeFileSync(editsPath, JSON.stringify(editsData, null, 2));
@@ -1163,8 +1268,13 @@ app.get('/api/agent-edit/status/:jobId', (req, res) => {
  * Restoring does not truncate the history: later checkpoints stay listed so a
  * rollback is itself reversible. The current state becomes a copy of the chosen
  * checkpoint; nothing is destroyed.
+ *
+ * Open, like the editing routes it belongs with. Undo and redo run through here,
+ * and a key requirement would break them on a locked instance while protecting
+ * nothing — anyone able to reach this can already rewrite the same state through
+ * PUT /edits.
  */
-app.post('/api/artipod/:artipodId/edits/restore', requireAuth, (req, res) => {
+app.post('/api/artipod/:artipodId/edits/restore', (req, res) => {
   const { artipodId } = req.params;
   const editsPath = join(__dirname, '../artipods', artipodId, 'edits.json');
 
@@ -1196,12 +1306,77 @@ app.post('/api/artipod/:artipodId/edits/restore', requireAuth, (req, res) => {
     // The editor's own ⌘Z history describes a different sequence of states and
     // would be misleading against restored words, so it starts clean.
     undoStack: [],
+    // The cursor is what makes undo and redo a pair: moving it back and forward
+    // is the whole operation, and editing while it is behind the tip is what
+    // decides the versions ahead are abandoned.
+    historyIndex: index,
     savedAt: new Date().toISOString(),
   };
   writeFileSync(editsPath, JSON.stringify(restored, null, 2));
   console.log(`Restored artipod ${artipodId} to checkpoint ${index} ("${target.label}")`);
 
   res.json({ success: true, index, label: target.label });
+});
+
+/**
+ * What changed at a checkpoint, compared against the one before it.
+ *
+ * Computed rather than stored: histories written before this existed still get
+ * a diff, and it stays correct if the diff itself is ever improved. Cheap
+ * enough that caching would be premature — a few hundred words either side.
+ */
+app.get('/api/artipod/:artipodId/edits/history/:index/diff', (req, res) => {
+  const { artipodId } = req.params;
+  const edits = readEdits(artipodId);
+  if (!edits) {
+    return res.status(404).json({ error: 'No saved edits for this artipod' });
+  }
+  const checkpoints: Checkpoint[] = Array.isArray(edits.checkpoints) ? edits.checkpoints : [];
+  const index = Number(req.params.index);
+  if (!Number.isInteger(index) || index < 0 || index >= checkpoints.length) {
+    return res.status(400).json({
+      error: `index must be between 0 and ${Math.max(0, checkpoints.length - 1)}`,
+    });
+  }
+  const diff = diffCheckpoints(index === 0 ? null : checkpoints[index - 1], checkpoints[index]);
+  res.json({
+    success: true,
+    index,
+    label: checkpoints[index].label,
+    kind: checkpointKind(checkpoints[index], index),
+    ...diff,
+  });
+});
+
+/**
+ * Rename a version. Marks it `renamed`, which also closes it to further
+ * amendment — once someone has named a burst, later edits start a new entry
+ * rather than silently rewriting their label.
+ */
+app.put('/api/artipod/:artipodId/edits/history/:index/label', (req, res) => {
+  const { artipodId } = req.params;
+  const editsPath = join(__dirname, '../artipods', artipodId, 'edits.json');
+  const edits = readEdits(artipodId);
+  if (!edits) {
+    return res.status(404).json({ error: 'No saved edits for this artipod' });
+  }
+  const checkpoints: Checkpoint[] = Array.isArray(edits.checkpoints) ? edits.checkpoints : [];
+  const index = Number(req.params.index);
+  if (!Number.isInteger(index) || index < 0 || index >= checkpoints.length) {
+    return res.status(400).json({
+      error: `index must be between 0 and ${Math.max(0, checkpoints.length - 1)}`,
+    });
+  }
+  const label = typeof req.body?.label === 'string' ? req.body.label.trim() : '';
+  if (!label) {
+    return res.status(400).json({ error: 'label is required' });
+  }
+  if (label.length > 200) {
+    return res.status(400).json({ error: 'label must be 200 characters or fewer' });
+  }
+  checkpoints[index] = { ...checkpoints[index], label, renamed: true };
+  writeFileSync(editsPath, JSON.stringify({ ...edits, checkpoints }, null, 2));
+  res.json({ success: true, index, label });
 });
 
 // Legacy route - redirect old filename format to artipod lookup

@@ -18,6 +18,7 @@ import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
 import { UploadContractWarning } from './components/UploadContractWarning';
 import type { ContractReport } from './lib/videoContract';
+import { EditHistoryPanel, type CheckpointMeta } from './components/EditHistoryPanel';
 import { rasterizeLowerThird } from './lib/rasterize';
 import type { Provider, TranscriptionResult, FeaturedPulse, ArtipodListItem, EditableWord, SpeedMarker, PlaybackSpeed } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
@@ -25,13 +26,6 @@ import { myUploadIds, rememberMyUpload } from './lib/myUploads';
 import './App.scss';
 
 type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
-/** One entry in the agent's edit history, as persisted in edits.json */
-interface AgentCheckpoint {
-  at: string;
-  /** The instruction that produced this state, or "Original" for the baseline */
-  label: string;
-  summary?: string;
-}
 
 /** Saved editor state from server */
 interface SavedEditorState {
@@ -176,13 +170,18 @@ function App() {
   // agent writes a new proposal (initialEditedWords only applies on mount)
   const [agentStatus, setAgentStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
   const [editorEpoch, setEditorEpoch] = useState(0);
-  // What the agent should do, and the history of what it has done. Each agent
-  // run checkpoints the complete edit state so a run can be rolled back by name
-  // rather than by counting ⌘Z presses.
+  // What the agent should do, and the history of what has been done to this
+  // pulse — by the agent AND by hand, on one timeline. Each entry checkpoints
+  // the complete edit state, so a version can be rolled back by name rather
+  // than by counting ⌘Z presses, and `historyIndex` is the undo/redo cursor.
   const [showAgentModal, setShowAgentModal] = useState(false);
   const [agentInstructions, setAgentInstructions] = useState('');
-  const [checkpoints, setCheckpoints] = useState<AgentCheckpoint[]>([]);
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [checkpoints, setCheckpoints] = useState<CheckpointMeta[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  /** How many word-level undo steps the editor still holds. Lets ⌘Z hand over
+   *  to the version timeline only once the editor has nothing left of its own. */
+  const [editorUndoDepth, setEditorUndoDepth] = useState(0);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
   const [restoringIndex, setRestoringIndex] = useState<number | null>(null);
 
   const [showExportModal, setShowExportModal] = useState(false);
@@ -207,6 +206,22 @@ function App() {
   const contentRef = useRef<HTMLElement>(null);
   const hasAutoTranscribed = useRef(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Held in a ref so the save callbacks handed to MediaEditor keep a stable
+   *  identity — they are memoized on the artipod, not on the history list. */
+  const historySyncRef = useRef<(() => void) | null>(null);
+  /**
+   * A new transcript rebuilds the whole edit list from scratch, and the editor
+   * saves that rebuild the moment it mounts. It is not a hand edit, and its
+   * words are not even comparable with the previous version's — the baseline
+   * they are indexed against has changed underneath. Recording it would invent
+   * a version nobody made.
+   *
+   * Cleared by the first real interaction with the editor rather than by the
+   * first save: several save paths fire on mount (words and speed both), so a
+   * flag consumed by whichever got there first would still let the other one
+   * through. Nobody has edited anything until somebody touches it.
+   */
+  const transcriptRebuildRef = useRef(false);
 
   // Fetch version info on mount
   useEffect(() => {
@@ -354,6 +369,7 @@ function App() {
       .then((res) => res.json())
       .then((data) => {
         setCheckpoints(Array.isArray(data.checkpoints) ? data.checkpoints : []);
+        setHistoryIndex(typeof data.historyIndex === 'number' ? data.historyIndex : -1);
         if (data.hasEdits && data.editedWords) {
           console.log(`Loaded saved edits for artipod ${artipodId}: ${data.editedWords.length} words, ${data.undoStack?.length || 0} undo states`);
           setSavedEditorState({
@@ -374,9 +390,13 @@ function App() {
       .finally(() => setEditsLoaded(true));
   }, [artipodId]);
 
-  // Save editor state (debounced)
+  // Save editor state (debounced). Editing is an open participation route on
+  // the server, so a missing key must not silently stop edits being saved —
+  // it did, which also meant hand edits were never versioned on an unlocked
+  // instance. The header is sent when there is one and omitted when there is not.
   const saveEditorState = useCallback((editedWords: EditableWord[], undoStack: EditableWord[][]) => {
-    if (!artipodId || !apiKey) return;
+    setEditorUndoDepth(undoStack.length);
+    if (!artipodId) return;
     
     // Clear any pending save
     if (saveTimeoutRef.current) {
@@ -389,18 +409,29 @@ function App() {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
         body: JSON.stringify({
           editedWords,
           undoStack,
+          recordHistory: !transcriptRebuildRef.current,
           savedAt: new Date().toISOString(),
         }),
       })
         .then((res) => {
           if (!res.ok) {
             console.error('Failed to save edits:', res.status);
+            return;
           }
+          // The server coalesces a burst of hand edits into one version and
+          // tells us where the cursor landed. Pull the list when it moves so
+          // the panel keeps up without remounting the editor.
+          return res.json().then((data) => {
+            if (typeof data?.historyIndex === 'number') {
+              setHistoryIndex((prev) => (prev === data.historyIndex ? prev : data.historyIndex));
+              historySyncRef.current?.();
+            }
+          });
         })
         .catch((err) => {
           console.error('Failed to save edits:', err);
@@ -426,7 +457,7 @@ function App() {
   // keeps saved fields that are not sent, so this cannot clobber undo history.
   const handleSpeedStateChange = useCallback((speedMarkers: SpeedMarker[], defaultSpeed: PlaybackSpeed) => {
     latestSpeedState.current = { speedMarkers, defaultSpeed };
-    if (!artipodId || !apiKey || latestEditedWordsRef.current.length === 0) return;
+    if (!artipodId || latestEditedWordsRef.current.length === 0) return;
 
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
@@ -436,17 +467,28 @@ function App() {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
-          'X-API-Key': apiKey,
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
         body: JSON.stringify({
           editedWords: latestEditedWordsRef.current,
           speedMarkers,
           defaultSpeed,
+          recordHistory: !transcriptRebuildRef.current,
           savedAt: new Date().toISOString(),
         }),
-      }).catch((err) => {
-        console.error('Failed to save speed state:', err);
-      });
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          // Re-timing a passage is an edit like any other, so it lands on the
+          // same timeline and moves the same cursor.
+          if (typeof data?.historyIndex === 'number') {
+            setHistoryIndex((prev) => (prev === data.historyIndex ? prev : data.historyIndex));
+            historySyncRef.current?.();
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to save speed state:', err);
+        });
     }, 1000);
   }, [artipodId, apiKey]);
 
@@ -594,6 +636,7 @@ function App() {
               continue; // Still processing, keep polling
             }
             // Completed - statusData is the transcription result
+            transcriptRebuildRef.current = true;
             setTranscriptionResult(statusData);
             return;
           } else {
@@ -610,6 +653,7 @@ function App() {
       }
 
       const result: TranscriptionResult = await response.json();
+      transcriptRebuildRef.current = true;
       setTranscriptionResult(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Transcription failed');
@@ -1003,7 +1047,8 @@ function App() {
         throw new Error(data.message || data.error || 'Restore failed');
       }
       await reloadEdits();
-      setShowHistoryModal(false);
+      // The panel stays open — restoring is usually one step of comparing
+      // several versions, not a thing you do once and leave.
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Restore failed');
     } finally {
@@ -1011,12 +1056,110 @@ function App() {
     }
   };
 
+  /**
+   * Refresh the version list alone.
+   *
+   * Deliberately does NOT remount the editor: hand edits create versions as you
+   * work, and remounting on each one would throw away the cursor and selection
+   * of the person who is still typing.
+   */
+  const refreshHistory = useCallback(async () => {
+    if (!artipodId) return;
+    try {
+      const res = await fetch(`/api/artipod/${artipodId}/edits`);
+      const data = await res.json();
+      setCheckpoints(Array.isArray(data.checkpoints) ? data.checkpoints : []);
+      setHistoryIndex(typeof data.historyIndex === 'number' ? data.historyIndex : -1);
+    } catch {
+      /* the list is a convenience; a failed refresh should not disturb editing */
+    }
+  }, [artipodId]);
+
+  useEffect(() => {
+    historySyncRef.current = refreshHistory;
+  }, [refreshHistory]);
+
+  // Undo and redo are the cursor moving along the timeline. Restoring never
+  // truncates, so stepping back and forward is symmetric; only a NEW edit made
+  // while rewound abandons the versions ahead (the server does that).
+  const canUndoVersion = historyIndex > 0;
+  const canRedoVersion = historyIndex >= 0 && historyIndex < checkpoints.length - 1;
+  const currentCheckpoint = historyIndex >= 0 ? checkpoints[historyIndex] : undefined;
+
+  /**
+   * ⌘Z / ⌘Y — undo and redo, layered over the editor's own word-level undo.
+   *
+   * ⌘Z steps the version timeline in two cases: when the current version is an
+   * AI run (one run can delete two hundred words, and undoing it a word at a
+   * time is not undoing it), and when the editor has nothing left to undo of
+   * its own. In between — while there are still word-level steps to take — the
+   * event falls through untouched, so fine-grained undo keeps working.
+   *
+   * ⌘Y and ⌘⇧Z always redo. The editor has no redo of its own, so this is
+   * purely additive.
+   */
+  useEffect(() => {
+    if (viewState !== 'viewing') return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+      const isRedo = key === 'y' || (key === 'z' && e.shiftKey);
+      const isUndo = key === 'z' && !e.shiftKey;
+      if (!isUndo && !isRedo) return;
+
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (restoringIndex !== null) return;
+
+      // The editor has no redo of its own, so this is additive rather than a
+      // hijack.
+      if (isRedo && canRedoVersion) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleRestore(historyIndex + 1);
+        return;
+      }
+      // An AI run is undone whole. Otherwise the editor gets first refusal on
+      // its own word-level steps, and the timeline picks up once those run out.
+      const editorCanUndo = editorUndoDepth > 0 && currentCheckpoint?.kind !== 'ai';
+      if (isUndo && canUndoVersion && !editorCanUndo) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleRestore(historyIndex - 1);
+      }
+    };
+    // Capture phase, so the decision is made before the editor's own handler
+    // sees the event — and so declining to act leaves it perfectly intact.
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [
+    viewState,
+    historyIndex,
+    canUndoVersion,
+    canRedoVersion,
+    currentCheckpoint,
+    restoringIndex,
+    editorUndoDepth,
+  ]);
+
   /** Pull the saved edit state back in and remount the editor to show it */
   const reloadEdits = async () => {
     if (!artipodId) return;
     const editsRes = await fetch(`/api/artipod/${artipodId}/edits`);
     const edits = await editsRes.json().catch(() => ({}));
     setCheckpoints(Array.isArray(edits.checkpoints) ? edits.checkpoints : []);
+    setHistoryIndex(typeof edits.historyIndex === 'number' ? edits.historyIndex : -1);
+    // Restoring clears the editor's word-level history server-side, so the
+    // depth must follow it down rather than waiting for a remount to report.
+    setEditorUndoDepth(Array.isArray(edits.undoStack) ? edits.undoStack.length : 0);
     if (edits.hasEdits && edits.editedWords) {
       setSavedEditorState({
         editedWords: edits.editedWords,
@@ -1132,51 +1275,6 @@ function App() {
         </Button>
         <Button onClick={handleAgentConfirm} disabled={!agentInstructions.trim()}>
           ✨ AI edit
-        </Button>
-      </ModalFooter>
-    </Modal>
-  );
-
-  const renderHistoryModal = () => (
-    <Modal open={showHistoryModal} onOpenChange={(open) => !open && setShowHistoryModal(false)} size="sm">
-      <ModalHeader>
-        <ModalTitle>AI Edit History</ModalTitle>
-        <ModalClose />
-      </ModalHeader>
-      <ModalBody>
-        <div className="flex flex-col gap-2">
-          <p className="m-0 text-sm text-muted-foreground">
-            Every AI edit is saved here. Restoring one brings the whole timeline back
-            to that point — nothing below it is lost, so you can jump forward again.
-          </p>
-          {checkpoints.map((cp, i) => (
-            <div
-              key={`${cp.at}-${i}`}
-              className="flex items-start justify-between gap-3 rounded border border-border p-2"
-            >
-              <div className="min-w-0">
-                <div className="text-sm font-medium break-words">{cp.label}</div>
-                {cp.summary && (
-                  <div className="text-xs text-muted-foreground break-words">{cp.summary}</div>
-                )}
-              </div>
-              <Button
-                size="sm"
-                variant="secondary"
-                onClick={() => handleRestore(i)}
-                isLoading={restoringIndex === i}
-                loadingText="Restoring…"
-                disabled={restoringIndex !== null}
-              >
-                Restore
-              </Button>
-            </div>
-          ))}
-        </div>
-      </ModalBody>
-      <ModalFooter>
-        <Button variant="ghost" onClick={() => setShowHistoryModal(false)}>
-          Close
         </Button>
       </ModalFooter>
     </Modal>
@@ -1558,7 +1656,6 @@ function App() {
       {renderRenameModal()}
       {renderExportModal()}
       {renderAgentModal()}
-      {renderHistoryModal()}
       {/* Compact toolbar */}
       <header className="app__toolbar">
         <div className="app__toolbar-left">
@@ -1693,17 +1790,48 @@ function App() {
                    '✨ AI edit'}
                 </Button>
               )}
-              {/* Self-gating: only ever non-empty once the agent has run */}
+              {/* Self-gating: only ever non-empty once something has been edited */}
               {checkpoints.length > 1 && (
-                <Button
-                  size="sm"
-                  variant="ghost"
-                  onClick={() => setShowHistoryModal(true)}
-                  title="Review or roll back earlier AI edits"
-                  aria-label="AI edit history"
-                >
-                  🕘 History ({checkpoints.length - 1})
-                </Button>
+                <>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleRestore(historyIndex - 1)}
+                    disabled={!canUndoVersion || restoringIndex !== null}
+                    title={
+                      canUndoVersion
+                        ? `Undo: back to "${checkpoints[historyIndex - 1]?.label ?? ''}"`
+                        : 'Nothing to undo'
+                    }
+                    aria-label="Undo to the previous version"
+                  >
+                    ↶ Undo
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    onClick={() => handleRestore(historyIndex + 1)}
+                    disabled={!canRedoVersion || restoringIndex !== null}
+                    title={
+                      canRedoVersion
+                        ? `Redo: forward to "${checkpoints[historyIndex + 1]?.label ?? ''}"`
+                        : 'Nothing to redo'
+                    }
+                    aria-label="Redo to the next version"
+                  >
+                    ↷ Redo
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant={showHistoryPanel ? 'secondary' : 'ghost'}
+                    onClick={() => setShowHistoryPanel((v) => !v)}
+                    title="Review, compare, or roll back to an earlier version"
+                    aria-label="Edit history"
+                    aria-pressed={showHistoryPanel}
+                  >
+                    🕘 History ({checkpoints.length - 1})
+                  </Button>
+                </>
               )}
               <Button
                 size="sm"
@@ -1837,10 +1965,28 @@ function App() {
 
       {/* Content area: MediaEditor owns the whole pane when viewing;
           the standalone player + split bar serve the pre-transcription states */}
-      <main className={`app__content${isDragging ? ' app__content--dragging' : ''}`} ref={contentRef}>
+      <main
+        className={`app__content${isDragging ? ' app__content--dragging' : ''}${
+          showHistoryPanel && viewState === 'viewing' && viewMode !== 'data'
+            ? ' app__content--with-history'
+            : ''
+        }`}
+        ref={contentRef}
+      >
         {viewState === 'viewing' && transcriptionResult && editsLoaded ? (
           <>
-            <div className={viewMode === 'data' ? 'app__hidden-editor' : 'app__editor-pane'}>
+            <div
+              className={
+                viewMode === 'data'
+                  ? 'app__hidden-editor'
+                  : `app__editor-pane${showHistoryPanel ? ' app__editor-pane--with-history' : ''}`
+              }
+              // The first touch inside the editor is what turns a rebuilt
+              // transcript back into an editing session someone is responsible
+              // for. Capture phase so it registers before the editor handles it.
+              onPointerDownCapture={() => { transcriptRebuildRef.current = false; }}
+              onKeyDownCapture={() => { transcriptRebuildRef.current = false; }}
+            >
               <MediaEditor
                 key={editorEpoch}
                 src={mediaUrl!}
@@ -1857,6 +2003,21 @@ function App() {
                 playerRef={playerRef}
               />
             </div>
+            {/* Beside the editor rather than over it: comparing a version with
+                what is on screen is the point, and a modal hides the thing you
+                are comparing against. */}
+            {showHistoryPanel && viewMode !== 'data' && artipodId && (
+              <EditHistoryPanel
+                checkpoints={checkpoints}
+                historyIndex={historyIndex}
+                artipodId={artipodId}
+                apiKey={apiKey}
+                onRestore={handleRestore}
+                restoringIndex={restoringIndex}
+                onRenamed={refreshHistory}
+                onClose={() => setShowHistoryPanel(false)}
+              />
+            )}
             {viewMode === 'data' && (
               <TranscriptDataView
                 transcript={transcriptionResult.transcript}
