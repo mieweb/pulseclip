@@ -50,6 +50,30 @@ const TARGET_FPS = 30;
  * file. Past this we keep the v1 warning instead.
  */
 export const MAX_TRANSCODE_BYTES = 1_200_000_000;
+/**
+ * The same ceiling for a phone or tablet, which is far lower.
+ *
+ * The pipeline holds the source bytes, the demuxed samples and the muxed output at once, so
+ * peak memory is a multiple of the file — a budget a desktop absorbs and a phone does not.
+ * Converting a 300MB+ capture on a handset also runs for minutes on a device whose own camera
+ * app is the intended path anyway. Past this we warn instead, which is honest and instant.
+ */
+export const MAX_TRANSCODE_BYTES_MOBILE = 250_000_000;
+
+/** Coarse handset/tablet check — deliberately conservative, only used to pick a size ceiling. */
+function isMobileLike(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const touch = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+  const smallMemory = (navigator as { deviceMemory?: number }).deviceMemory !== undefined
+    ? ((navigator as { deviceMemory?: number }).deviceMemory ?? 8) <= 4
+    : false;
+  return touch || smallMemory;
+}
+
+/** The size ceiling that applies on this device. */
+export function transcodeSizeLimit(): number {
+  return isMobileLike() ? MAX_TRANSCODE_BYTES_MOBILE : MAX_TRANSCODE_BYTES;
+}
 /** How many audio frames to hand the encoder at a time. */
 const AUDIO_CHUNK_FRAMES = 4096;
 
@@ -366,8 +390,9 @@ export async function transcodeToContract(
   file: File,
   { onProgress, signal }: TranscodeOptions = {}
 ): Promise<File> {
-  if (file.size > MAX_TRANSCODE_BYTES) {
-    throw new Error('This file is too large to convert in the browser.');
+  const limit = transcodeSizeLimit();
+  if (file.size > limit) {
+    throw new Error('This file is too large to convert on this device.');
   }
   const report = (phase: TranscodePhase, ratio: number) =>
     onProgress?.({ phase, ratio: Math.max(0, Math.min(1, ratio)) });

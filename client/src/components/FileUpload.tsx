@@ -59,21 +59,22 @@ export const FileUpload: FC<FileUploadProps> = ({ onFileUploaded, onInspected, d
       setContractReport(null);
       return file;
     }
-    setContractReport(report);
     try {
-      // Loaded on demand: the demuxer and muxer are ~400KB, and a visitor who never drops a
+      // Loaded on demand: the demuxer and muxer are ~220KB, and a visitor who never drops a
       // non-compliant file should never pay for them.
       const { transcodeToContract } = await import('../lib/transcodeToContract');
       const converted = await transcodeToContract(file, {
         onProgress: (progress) => setConverting(progress),
       });
-      // It now meets the contract, so there is nothing left to warn about.
-      setContractReport(null);
+      // It meets the contract now, so there is nothing to warn about. Note the warning was
+      // never shown during conversion: telling someone how to fix a file by hand while we are
+      // busy fixing it for them is just noise.
       onInspected?.({ ...report, violations: [], ok: true, headline: null }, converted);
       return converted;
     } catch {
       // Unsupported browser, an undecodable source, or a file too large to convert here.
-      // The warning stays up and the original is uploaded unchanged.
+      // Only NOW is the warning worth showing, because now it is actionable.
+      setContractReport(report);
       return file;
     } finally {
       setConverting(null);
