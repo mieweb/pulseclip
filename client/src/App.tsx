@@ -17,13 +17,25 @@ import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
 // Ozwell and SuperChat rather than restyled to look like them — the sparkles
 // mark, the bubble shell, the starter pills and the composer are all the
 // library's, so this surface tracks the design system instead of drifting.
+//
+// These come from the package root rather than a `components/…` deep import,
+// because the chat primitives have no per-component build entry in @mieweb/ui.
+// Rollup shakes the unused JS out either way, so the bundle is within 0.1 kB of
+// a deep import. The one cost is that Vite resolves the `import('onnxruntime-web')`
+// inside Hey Ozwell's wake-word path while building and emits an 11 MB
+// `ort-wasm-simd-threaded.wasm` into dist/assets. Nothing loads it and no
+// visitor downloads it — it is dead weight in the release tarball only.
+//
+// Do NOT "fix" that by aliasing onnxruntime-web to a stub in vite.config: that
+// is the runtime the wake word needs, so it would silently break Hey Ozwell if
+// it is ever added here. The real fix is a deep-import entry upstream.
 import {
   SparklesIcon,
   ChatBubble,
   SuggestedActions,
   type AISuggestedAction,
-} from '@mieweb/ui/components/AI/chat';
-import { MessageComposer } from '@mieweb/ui/components/Messaging';
+  MessageComposer,
+} from '@mieweb/ui';
 import { RecordButton } from '@mieweb/ui/components/RecordButton';
 import {
   Dropdown,
