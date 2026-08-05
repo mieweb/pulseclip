@@ -1566,15 +1566,18 @@ function App() {
             trigger={
               <button
                 type="button"
-                // Deliberately the SAME class string SuggestedActions uses for
-                // its chips, minus the gap. This control sits directly beneath
-                // them, so anything merely similar reads as a near-miss; making
-                // it a literal sibling is the only thing that looks intentional.
-                className="hover:border-primary-300 hover:bg-primary-50 hover:text-primary-900 dark:hover:border-primary-700 dark:hover:bg-primary-900/20 dark:hover:text-primary-300 flex min-w-0 items-center gap-2 rounded-full border border-neutral-200 px-3 py-1.5 text-sm text-neutral-700 transition-colors dark:border-neutral-700 dark:text-neutral-300"
+                // Quiet on purpose, the way Copilot and Claude do it: this is a
+                // statement about the current state, not an action competing for
+                // attention. Deliberately NOT the bordered chip the starters
+                // use — those insert text when clicked, this opens a menu, and
+                // giving two unlike controls the same shape a row apart implies
+                // they do the same thing. Rounded-full so the hover background
+                // matches the shapes around it rather than introducing a corner.
+                className="text-muted-foreground hover:text-foreground hover:bg-muted flex min-w-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs transition-colors"
               >
-                <SparklesIcon size="sm" className="h-4 w-4 shrink-0" />
+                <SparklesIcon size="sm" className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">{agentModelLabel}</span>
-                <span aria-hidden="true" className="text-muted-foreground">▾</span>
+                <span aria-hidden="true">▾</span>
               </button>
             }
           >
