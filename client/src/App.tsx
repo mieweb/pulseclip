@@ -5,6 +5,7 @@ import { PulseCamButton } from './components/PulseCamButton';
 import { MediaPlayer, type MediaPlayerRef } from './ui-staging/MediaPlayer';
 import { MediaEditor } from './ui-staging/MediaEditor';
 import { ThemeToggle } from '@mieweb/ui/components/ThemeProvider';
+import { Select } from '@mieweb/ui/components/Select';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
 import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
@@ -976,19 +977,16 @@ function App() {
           )}
           {viewState === 'ready' && (
             <>
-              <select
-                className="app__provider-dropdown"
+              <Select
+                options={providers.map((p) => ({ value: p.id, label: p.displayName }))}
                 value={selectedProvider}
-                onChange={(e) => setSelectedProvider(e.target.value)}
+                onValueChange={setSelectedProvider}
                 disabled={providers.length === 0}
-                aria-label="Transcription Provider"
-              >
-                {providers.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.displayName}
-                  </option>
-                ))}
-              </select>
+                size="sm"
+                label="Transcription provider"
+                hideLabel
+                className="w-52"
+              />
               <button
                 className="app__transcribe-btn"
                 onClick={() => handleTranscribe(false)}

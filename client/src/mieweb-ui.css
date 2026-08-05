@@ -20,3 +20,40 @@
 
 /* Match @mieweb/ui dark mode convention: class or data-theme attribute */
 @custom-variant dark (&:where(.dark, .dark *, [data-theme='dark'], [data-theme='dark'] *));
+
+/**
+ * Rules borrowed from the preflight this app omits.
+ *
+ * @mieweb/ui components are written assuming preflight has run, so they never
+ * override the browser defaults it normally clears. Two of those defaults are
+ * visible here:
+ *
+ * 1. <textarea> falls back to a MONOSPACE font, so library inputs render in
+ *    Courier here while looking correct in every other MIE app.
+ * 2. <button> falls back to `buttonface` and a `2px outset` border. Every bare
+ *    button in the app carries a Windows-95 bevel as a result, and buttonface
+ *    is the SAME light grey in dark mode, so a component that sets only a text
+ *    colour ends up light-grey-on-light-grey.
+ *
+ * These have to sit in `layer(base)`. Unlayered declarations outrank every
+ * layered one, so at the top level `button { background-color: transparent }`
+ * would beat `bg-primary-800` from `layer(utilities)` and flatten the
+ * background of every button in the app. In `layer(base)` a component's own
+ * utility classes still win, which is the point.
+ */
+@layer base {
+  button,
+  input,
+  optgroup,
+  select,
+  textarea {
+    font-family: inherit;
+  }
+
+  button {
+    background-color: transparent;
+    background-image: none;
+    border-width: 0;
+    border-style: solid;
+  }
+}
