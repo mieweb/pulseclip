@@ -1562,14 +1562,15 @@ function App() {
             trigger={
               <button
                 type="button"
-                // rounded-full, not `rounded`: everything around it is a pill or
-                // a 2xl — the starter chips, the composer — and a 4px corner on
-                // one small control reads as a stray element from another kit.
-                className="text-muted-foreground hover:text-foreground hover:bg-muted -mx-1 flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors"
+                // Deliberately the SAME class string SuggestedActions uses for
+                // its chips, minus the gap. This control sits directly beneath
+                // them, so anything merely similar reads as a near-miss; making
+                // it a literal sibling is the only thing that looks intentional.
+                className="hover:border-primary-300 hover:bg-primary-50 hover:text-primary-900 dark:hover:border-primary-700 dark:hover:bg-primary-900/20 dark:hover:text-primary-300 flex min-w-0 items-center gap-2 rounded-full border border-neutral-200 px-3 py-1.5 text-sm text-neutral-700 transition-colors dark:border-neutral-700 dark:text-neutral-300"
               >
-                <SparklesIcon size="sm" className="h-3 w-3 shrink-0" />
+                <SparklesIcon size="sm" className="h-4 w-4 shrink-0" />
                 <span className="truncate">{agentModelLabel}</span>
-                <span aria-hidden="true">▾</span>
+                <span aria-hidden="true" className="text-muted-foreground">▾</span>
               </button>
             }
           >
