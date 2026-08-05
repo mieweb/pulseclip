@@ -5,6 +5,7 @@ import { randomUUID, createHash } from 'crypto';
 import { execFile } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { tmpdir } from 'os';
 import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync, renameSync } from 'fs';
 import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
@@ -542,6 +543,73 @@ app.post('/api/transcribe', async (req, res) => {
       error: 'Transcription failed',
       message: error instanceof Error ? error.message : 'Unknown error',
     });
+  }
+});
+
+/**
+ * Dictation — speak an instruction instead of typing it.
+ *
+ * Separate from /api/transcribe, which transcribes media already sitting in an
+ * artipod and caches the result against that file. This takes a throwaway blob
+ * from a microphone, returns plain text, and keeps nothing.
+ *
+ * Always the local Whisper provider, never AssemblyAI: dictation is incidental
+ * to writing an instruction, and nobody expects holding a mic button to spend
+ * the deployment's paid transcription quota.
+ *
+ * Deliberately NOT behind `runHeavyJob`. That queue exists so two 40-segment
+ * renders cannot OOM the box; a few seconds of speech through base.en is
+ * nothing like a render, and making someone wait out an export before their
+ * words appear would read as a broken microphone. The size and duration caps
+ * below are what bound this instead.
+ */
+const MAX_DICTATION_BYTES = 10 * 1024 * 1024;
+const dictationUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: MAX_DICTATION_BYTES, files: 1 },
+});
+
+app.post('/api/dictate', dictationUpload.single('audio'), async (req, res) => {
+  if (!req.file?.buffer?.length) {
+    return res.status(400).json({ error: 'No audio was received' });
+  }
+
+  // Prefer a local Whisper; fall back to the default only if none is present.
+  const provider =
+    providerRegistry.list().find((p) => p.id.startsWith('whisper')) ??
+    providerRegistry.list()[0];
+  if (!provider) {
+    return res.status(503).json({ error: 'No transcription provider is configured' });
+  }
+  const impl = providerRegistry.get(provider.id);
+  if (!impl) {
+    return res.status(503).json({ error: 'No transcription provider is configured' });
+  }
+
+  // The provider transcribes a path on disk (it shells out to ffmpeg), so the
+  // blob has to land somewhere. Temp dir, removed in `finally` whatever happens.
+  const tmpPath = join(tmpdir(), `pulseclip-dictate-${randomUUID()}.webm`);
+  try {
+    writeFileSync(tmpPath, req.file.buffer);
+    const result = await impl.transcribe(tmpPath);
+    const text = (result.normalized?.words ?? [])
+      .map((w: { text: string }) => w.text)
+      .join(' ')
+      .replace(/\s+([,.!?])/g, '$1')
+      .trim();
+    res.json({ success: true, text, provider: { id: provider.id, displayName: provider.displayName } });
+  } catch (error) {
+    console.error('Dictation error:', error);
+    res.status(500).json({
+      error: 'Could not transcribe that',
+      message: error instanceof Error ? error.message : 'Unknown error',
+    });
+  } finally {
+    try {
+      if (existsSync(tmpPath)) unlinkSync(tmpPath);
+    } catch {
+      /* a leftover temp file is not worth failing the request over */
+    }
   }
 });
 

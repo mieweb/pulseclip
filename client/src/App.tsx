@@ -23,7 +23,15 @@ import {
   type AISuggestedAction,
 } from '@mieweb/ui/components/AI/chat';
 import { MessageComposer } from '@mieweb/ui/components/Messaging';
-import { AudioLines, Film, Zap, Scissors, Type } from 'lucide-react';
+import { RecordButton } from '@mieweb/ui/components/RecordButton';
+import {
+  Dropdown,
+  DropdownContent,
+  DropdownItem,
+  DropdownLabel,
+  DropdownSeparator,
+} from '@mieweb/ui/components/Dropdown';
+import { AudioLines, Film, Zap, Scissors, Type, Check } from 'lucide-react';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
 import { UploadContractWarning } from './components/UploadContractWarning';
@@ -37,7 +45,6 @@ import {
   loadAgentProvider,
   saveAgentProvider,
   clearAgentProvider,
-  maskKey,
   PROVIDER_PRESETS,
   type AgentProvider,
 } from './lib/agentProvider';
@@ -104,6 +111,15 @@ function describeAgentTurn(turn: CheckpointMeta): string {
     parts.push(`${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')} long`);
   }
   return parts.join(' · ') || 'Proposed an edit';
+}
+
+/**
+ * Tick for the model menu. A checkmark rather than DropdownItem's `checked`
+ * checkbox: picking a model is one-of-many, and a column of checkboxes invites
+ * people to tick two. The blank keeps the labels aligned.
+ */
+function PickedMark({ on }: { on: boolean }) {
+  return on ? <Check className="h-4 w-4" aria-hidden="true" /> : <span className="block h-4 w-4" />;
 }
 
 /** Landing-page feature highlights */
@@ -242,6 +258,10 @@ function App() {
   // the app key, because the shared budget is no longer at stake.
   const [agentProvider, setAgentProvider] = useState<AgentProvider | null>(() => loadAgentProvider());
   const [showProviderForm, setShowProviderForm] = useState(false);
+  /** The inline key row, shown only after picking a provider that needs one. */
+  const [showKeyForm, setShowKeyForm] = useState(false);
+  /** Mirrors RecordButton's own vocabulary so the mic reports its own state. */
+  const [dictationState, setDictationState] = useState<'idle' | 'recording' | 'transcribing' | 'error'>('idle');
   const [providerDraft, setProviderDraft] = useState<AgentProvider>(() => ({
     provider: 'openai',
     base: PROVIDER_PRESETS[0].base,
@@ -1358,6 +1378,55 @@ function App() {
     if (body) body.scrollTop = body.scrollHeight;
   }, [showAgentModal, agentTurns.length]);
 
+  /**
+   * Speak the instruction instead of typing it. Transcribed by the same local
+   * Whisper the pulse itself uses, so no key is spent and nothing leaves the
+   * box. The text is APPENDED rather than replacing what is there — dictation
+   * is usually a addition to a half-written thought, and clobbering someone's
+   * typing would be unforgivable for a button that is easy to hit by accident.
+   */
+  const handleDictation = useCallback(async (blob: Blob) => {
+    setDictationState('transcribing');
+    try {
+      const form = new FormData();
+      form.append('audio', blob, 'dictation.webm');
+      const res = await fetch('/api/dictate', { method: 'POST', body: form });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(data.message || data.error || 'Could not transcribe that');
+      const text = (data.text || '').trim();
+      if (!text) {
+        setDictationState('idle');
+        return;
+      }
+      setAgentInstructions((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text));
+      setDictationState('idle');
+    } catch (err) {
+      setDictationState('error');
+      setError(err instanceof Error ? err.message : 'Could not transcribe that');
+      // Back to idle so the mic is usable again rather than stuck showing a failure.
+      setTimeout(() => setDictationState('idle'), 2500);
+    }
+  }, []);
+
+  /**
+   * Which preset the SAVED provider is, not the half-filled draft. Matching on
+   * the draft showed a tick against Groq while Anthropic was the thing actually
+   * running, because the draft defaults to the first preset and only moves when
+   * someone opens the menu.
+   */
+  const activePresetId = agentProvider
+    ? (PROVIDER_PRESETS.find(
+        (p) => p.id !== 'custom' && p.base === agentProvider.base && p.provider === agentProvider.provider
+      )?.id ?? 'custom')
+    : null;
+
+  /** What the model line under the composer reads. */
+  const agentModelLabel = agentProvider
+    ? agentProvider.model
+    : agentAvailable
+      ? 'Shared AI'
+      : 'No AI configured';
+
   const agentAccountLine = agentProvider
     ? `${agentProvider.model} · your account`
     : agentAvailable
@@ -1408,10 +1477,6 @@ function App() {
                   </div>
                 </div>
               ))}
-              <p className="text-muted-foreground m-0 text-xs">
-                The next instruction builds on the most recent run — “now make it 30
-                seconds” knows what it just did.
-              </p>
             </div>
           ) : (
             <p className="text-muted-foreground m-0 text-sm">
@@ -1423,118 +1488,6 @@ function App() {
         </div>
       </ModalBody>
 
-      {/* Which account pays for the run — static chrome, not the tail of a
-          scrolling conversation. The shared lane is rate-limited and billed to
-          whoever runs this server, so the way to point it at your own belongs
-          within reach of the send button, not somewhere back up the history. */}
-      <div className="border-border shrink-0 border-t px-3 pt-2">
-          <div className={showProviderForm ? 'border-border rounded-lg border p-2.5' : ''}>
-            {!showProviderForm ? (
-              // Collapsed, the account itself is already named in the header, so
-              // this row carries only what the header cannot: the catch, and the
-              // way out of it.
-              <div className="flex items-center justify-between gap-2 rounded-lg px-1 py-1 text-left">
-                <span className="text-muted-foreground min-w-0 text-xs">
-                  {agentProvider
-                    ? `${maskKey(agentProvider.apiKey)} · stays in this browser`
-                    : agentAvailable
-                      ? 'Free, but rate-limited across everyone using it'
-                      : 'This server has no provider, so add your own to use AI edits'}
-                </span>
-                <div className="flex shrink-0 gap-1">
-                  <Button size="sm" variant="ghost" onClick={() => setShowProviderForm(true)}>
-                    {agentProvider ? 'Change' : 'Use my own key'}
-                  </Button>
-                  {agentProvider && (
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      onClick={() => { clearAgentProvider(); setAgentProvider(null); }}
-                      title="Forget this key and go back to the shared AI"
-                    >
-                      Forget
-                    </Button>
-                  )}
-                </div>
-              </div>
-            ) : (
-              <div className="flex flex-col gap-2">
-                <p className="m-0 text-xs text-muted-foreground">
-                  Your key stays in this browser. It is sent with the request that uses
-                  it and never saved on the server or into the pulse.
-                </p>
-                <div className="flex flex-wrap gap-1">
-                  {PROVIDER_PRESETS.map((preset) => (
-                    <Button
-                      key={preset.id}
-                      size="sm"
-                      variant={providerPreset === preset.id ? 'secondary' : 'ghost'}
-                      onClick={() => {
-                        setProviderPreset(preset.id);
-                        setProviderDraft((d) => ({
-                          ...d,
-                          provider: preset.provider,
-                          base: preset.base,
-                          model: preset.model,
-                        }));
-                      }}
-                    >
-                      {preset.label}
-                    </Button>
-                  ))}
-                </div>
-                {PROVIDER_PRESETS.find((p) => p.id === providerPreset)?.hint && (
-                  <p className="m-0 text-xs text-muted-foreground">
-                    {PROVIDER_PRESETS.find((p) => p.id === providerPreset)?.hint}
-                  </p>
-                )}
-                {providerPreset === 'custom' && (
-                  <Input
-                    label="Base URL"
-                    value={providerDraft.base}
-                    onChange={(e) => setProviderDraft((d) => ({ ...d, base: e.target.value }))}
-                    placeholder="https://…/v1"
-                  />
-                )}
-                <Input
-                  label="Model"
-                  value={providerDraft.model}
-                  onChange={(e) => setProviderDraft((d) => ({ ...d, model: e.target.value }))}
-                  placeholder="openai/gpt-oss-120b"
-                />
-                <Input
-                  label="API key"
-                  type="password"
-                  value={providerDraft.apiKey}
-                  onChange={(e) => setProviderDraft((d) => ({ ...d, apiKey: e.target.value }))}
-                  placeholder="sk-…"
-                />
-                <div className="flex justify-end gap-1">
-                  <Button size="sm" variant="ghost" onClick={() => setShowProviderForm(false)}>
-                    Cancel
-                  </Button>
-                  <Button
-                    size="sm"
-                    disabled={!providerDraft.apiKey.trim() || !providerDraft.model.trim()}
-                    onClick={() => {
-                      const next = {
-                        ...providerDraft,
-                        base: providerDraft.base.trim(),
-                        model: providerDraft.model.trim(),
-                        apiKey: providerDraft.apiKey.trim(),
-                      };
-                      saveAgentProvider(next);
-                      setAgentProvider(next);
-                      setShowProviderForm(false);
-                    }}
-                  >
-                    Save
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-      </div>
       {/* The composer IS the action, as on every other AI surface — there is no
           separate confirm button, and ⏎ sends. Escape and ✕ still cancel. */}
       <ModalFooter className="flex-col items-stretch gap-2 border-t-0 px-3 pt-2 pb-2">
@@ -1555,8 +1508,12 @@ function App() {
           onSend={({ content }) => handleAgentConfirm(content)}
           placeholder={
             canRunAgent
-              ? 'Tell it what to change…'
-              : 'Add an AI provider above to use AI edits'
+              ? dictationState === 'recording'
+                ? 'Listening…'
+                : dictationState === 'transcribing'
+                  ? 'Writing that down…'
+                  : 'Tell it what to change, or hold the mic'
+              : 'Pick an AI below to use AI edits'
           }
           disabled={!canRunAgent}
           variant="minimal"
@@ -1564,10 +1521,138 @@ function App() {
           showAttachmentPicker={false}
           showCameraButton={false}
           showCharacterCount={false}
+          // Same slot AIChat uses for talk-to-text. Speaking an instruction is
+          // the natural input here — people describe an edit far faster than
+          // they type one.
+          inputTrailing={
+            <RecordButton
+              variant="ghost"
+              size="sm"
+              showPulse={false}
+              showWaveform
+              showTranscriptionState
+              transcriptionState={dictationState}
+              maxDuration={120}
+              disabled={!canRunAgent || dictationState === 'transcribing'}
+              onRecordingStart={() => setDictationState('recording')}
+              onRecordingComplete={handleDictation}
+              onRecordingError={(err) => setError(err.message)}
+              title="Hold to speak your instruction"
+              aria-label="Dictate an instruction"
+            />
+          }
         />
-        <p className="text-muted-foreground m-0 px-1 text-xs">
-          Silent gaps come out automatically. Use ✂️ for fine-grained cleanup.
-        </p>
+
+        {/* The model lives on one thin line under the composer, the way Copilot
+            and Claude put it — a control you reach for occasionally should not
+            occupy a whole panel above the thing you actually came to type in. */}
+        <div className="flex items-center gap-1 px-1">
+          <Dropdown
+            placement="top-start"
+            open={showProviderForm}
+            onOpenChange={setShowProviderForm}
+            trigger={
+              <button
+                type="button"
+                className="text-muted-foreground hover:text-foreground -mx-1 flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-xs transition-colors"
+              >
+                <SparklesIcon size="sm" className="h-3 w-3 shrink-0" />
+                <span className="truncate">{agentModelLabel}</span>
+                <span aria-hidden="true">▾</span>
+              </button>
+            }
+          >
+            <DropdownContent>
+              <DropdownLabel>Run this edit with</DropdownLabel>
+              {agentAvailable && (
+                <DropdownItem
+                  icon={<PickedMark on={!agentProvider} />}
+                  onClick={() => { clearAgentProvider(); setAgentProvider(null); setShowKeyForm(false); }}
+                >
+                  Shared AI — free, rate-limited
+                </DropdownItem>
+              )}
+              {PROVIDER_PRESETS.map((preset) => (
+                <DropdownItem
+                  key={preset.id}
+                  icon={<PickedMark on={activePresetId === preset.id} />}
+                  onClick={() => {
+                    setProviderPreset(preset.id);
+                    setProviderDraft((d) => ({
+                      ...d,
+                      provider: preset.provider,
+                      base: preset.base,
+                      model: preset.model,
+                    }));
+                    setShowKeyForm(true);
+                  }}
+                >
+                  {preset.label}
+                </DropdownItem>
+              ))}
+              {agentProvider && (
+                <>
+                  <DropdownSeparator />
+                  <DropdownItem
+                    variant="danger"
+                    onClick={() => { clearAgentProvider(); setAgentProvider(null); setShowKeyForm(false); }}
+                  >
+                    Forget my key
+                  </DropdownItem>
+                </>
+              )}
+            </DropdownContent>
+          </Dropdown>
+        </div>
+
+        {/* Only once a provider needing a key has been picked. Inline and
+            single-row: a key is one thing to paste, not a form to fill in. */}
+        {showKeyForm && (
+          <div className="border-border flex flex-col gap-2 rounded-lg border p-2">
+            {providerPreset === 'custom' && (
+              <Input
+                value={providerDraft.base}
+                onChange={(e) => setProviderDraft((d) => ({ ...d, base: e.target.value }))}
+                placeholder="https://…/v1"
+                aria-label="Base URL"
+              />
+            )}
+            <div className="flex gap-1">
+              <Input
+                className="min-w-0 flex-1"
+                value={providerDraft.model}
+                onChange={(e) => setProviderDraft((d) => ({ ...d, model: e.target.value }))}
+                placeholder="Model"
+                aria-label="Model"
+              />
+              <Input
+                className="min-w-0 flex-1"
+                type="password"
+                value={providerDraft.apiKey}
+                onChange={(e) => setProviderDraft((d) => ({ ...d, apiKey: e.target.value }))}
+                placeholder="API key — stays in this browser"
+                aria-label="API key"
+              />
+              <Button
+                size="sm"
+                disabled={!providerDraft.apiKey.trim() || !providerDraft.model.trim()}
+                onClick={() => {
+                  const next = {
+                    ...providerDraft,
+                    base: providerDraft.base.trim(),
+                    model: providerDraft.model.trim(),
+                    apiKey: providerDraft.apiKey.trim(),
+                  };
+                  saveAgentProvider(next);
+                  setAgentProvider(next);
+                  setShowKeyForm(false);
+                }}
+              >
+                Save
+              </Button>
+            </div>
+          </div>
+        )}
       </ModalFooter>
     </Modal>
   );
