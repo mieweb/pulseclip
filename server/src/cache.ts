@@ -88,6 +88,22 @@ export async function getCachedTranscription(
   }
 }
 
+// Get the most recently cached transcription for a file, regardless of provider.
+export async function getCachedTranscriptionForFile(filePath: string): Promise<any | null> {
+  try {
+    const fileHash = await computeFileHash(filePath);
+    const index = loadCacheIndex();
+    const matchingEntries = Object.values(index.entries)
+      .filter((entry) => entry.fileHash === fileHash)
+      .sort((first, second) => second.createdAt.localeCompare(first.createdAt));
+
+    return matchingEntries[0]?.result ?? null;
+  } catch (error) {
+    console.error('Cache lookup error:', error);
+    return null;
+  }
+}
+
 // Store transcription result in cache
 export async function cacheTranscription(
   filePath: string,

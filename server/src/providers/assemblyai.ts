@@ -31,7 +31,7 @@ export class AssemblyAIProvider implements TranscriptionProvider {
     const transcript = await this.client.transcripts.transcribe({
       audio: mediaUrl,
       speaker_labels: options?.speakerLabels ?? false,
-      speech_models: options?.speech_models ?? ["universal-3-pro", "universal-2"],
+      speech_models: options?.speech_models ?? ["universal-3-5-pro"],
       disfluencies: true,      // Include filler words (um, uh, etc.)
       format_text: false,      // No text cleanup - raw precise output
     });

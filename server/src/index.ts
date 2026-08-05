@@ -7,8 +7,9 @@ import { dirname, join } from 'path';
 import { existsSync, statSync, unlinkSync, mkdirSync, writeFileSync, rmSync, readdirSync, readFileSync } from 'fs';
 import dotenv from 'dotenv';
 import { initializeProviders } from './providers/registry.js';
-import { getCachedTranscription, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
+import { getCachedTranscription, getCachedTranscriptionForFile, cacheTranscription, getCacheStats, clearCache, removeCacheForFile } from './cache.js';
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
+import { createShare, getSharedArtipod, removeSharesForArtipod } from './shares.js';
 import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
 import { buildExportPlan, buildSrt, renderExport, canBurnSubtitles, EXPORT_FILENAMES } from './export.js';
 import {
@@ -101,12 +102,19 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const app = express();
-const port = process.env.PORT || 3000;
+const port = Number(process.env.PORT) || 3000;
+
+function artipodMediaUrl(artipodId: string, filename: string): string {
+  return `/artipods/${encodeURIComponent(artipodId)}/${encodeURIComponent(filename)}`;
+}
 
 // Initialize provider registry
 const providerRegistry = initializeProviders();
 
-// Secret key for protected endpoints
+// Secret key for protected endpoints. This sits alongside the OAuth boundary
+// added in #29 rather than replacing it: with no SECRET_KEY set — the default,
+// and what the OAuth deployments use — requireAuth is a no-op and behaviour is
+// exactly main's. Instances that do set one (dev2, prod) keep their lock.
 const secretKey = process.env.SECRET_KEY;
 
 // Auth middleware for protected endpoints
@@ -253,9 +261,14 @@ app.get('/api/pulsecam/deeplink', (req, res) => {
   });
 });
 
-// Upload pulse (protected) - creates an artipod folder with UUID
+// Upload pulse - creates an artipod folder with UUID
 // Includes duplicate detection based on file checksum
-app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
+//
+// Deliberately NOT behind requireAuth. #29 moved upload behind the OAuth
+// boundary at the origin and dropped the API-key path from FileUpload, so a
+// key gate here would 401 the dropzone with no way for it to answer. Upload
+// stays in the open participation tier; the destructive routes below do not.
+app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
   }
@@ -278,7 +291,7 @@ app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
       console.error('Failed to cleanup duplicate upload:', e);
     }
     
-    const fileUrl = `/artipods/${existing.artipodId}/${existing.filename}`;
+    const fileUrl = artipodMediaUrl(existing.artipodId, existing.filename);
     return res.json({
       success: true,
       artipodId: existing.artipodId,
@@ -294,7 +307,7 @@ app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
   // Register the new checksum
   registerChecksum(checksum, artipodId, req.file.originalname);
   
-  const fileUrl = `/artipods/${artipodId}/${req.file.originalname}`;
+  const fileUrl = artipodMediaUrl(artipodId, req.file.originalname);
 
   res.json({
     success: true,
@@ -308,7 +321,7 @@ app.post('/api/upload', requireAuth, upload.single('file'), (req, res) => {
   });
 });
 
-// Transcribe with selected provider (auth required only for non-cached requests)
+// Transcribe with selected provider
 app.post('/api/transcribe', async (req, res) => {
   try {
     const { mediaUrl, providerId, options, skipCache } = req.body;
@@ -331,8 +344,8 @@ app.post('/api/transcribe', async (req, res) => {
 
     // Extract artipodId and filename from URL: /artipods/{artipodId}/{filename}
     const urlParts = mediaUrl.split('/');
-    const filename = urlParts.pop() || '';
-    const artipodId = urlParts.pop() || '';
+    const filename = decodeURIComponent(urlParts.pop() || '');
+    const artipodId = decodeURIComponent(urlParts.pop() || '');
     const localPath = join(__dirname, '../artipods', artipodId, filename);
 
     // Check cache first (unless skipCache is true) - no auth required for cached results
@@ -353,14 +366,6 @@ app.post('/api/transcribe', async (req, res) => {
       }
     } else {
       console.log(`Skipping cache for ${filename} (re-transcribe requested)`);
-    }
-
-    // Auth required for actual transcription (uses paid API)
-    if (secretKey) {
-      const providedKey = req.headers['x-api-key'] as string;
-      if (!providedKey || providedKey !== secretKey) {
-        return res.status(401).json({ error: 'Unauthorized', message: 'Valid API key required for transcription' });
-      }
     }
 
     // Check file size to determine sync vs async transcription
@@ -479,6 +484,35 @@ interface ArtipodMetadata {
   mediaUrl: string | null;
 }
 
+interface SharedMedia {
+  artipodId: string;
+  mediaFile: string;
+  mediaPath: string;
+}
+
+function getSharedMedia(token: string): SharedMedia | null {
+  if (!/^[a-f0-9]{32}$/i.test(token)) {
+    return null;
+  }
+
+  const share = getSharedArtipod(token);
+  if (!share) {
+    return null;
+  }
+
+  const artipodPath = join(__dirname, '../artipods', share.artipodId);
+  const mediaFile = findMediaInArtipod(artipodPath);
+  if (!mediaFile) {
+    return null;
+  }
+
+  return {
+    artipodId: share.artipodId,
+    mediaFile,
+    mediaPath: join(artipodPath, mediaFile),
+  };
+}
+
 function getArtipodMetadata(artipodId: string, baseUrl: string): ArtipodMetadata | null {
   const artipodPath = join(__dirname, '../artipods', artipodId);
   
@@ -524,7 +558,7 @@ function getArtipodMetadata(artipodId: string, baseUrl: string): ArtipodMetadata
   
   // Get media URL
   const mediaFile = findMediaInArtipod(artipodPath);
-  const mediaUrl = mediaFile ? `${baseUrl}/artipods/${artipodId}/${mediaFile}` : null;
+  const mediaUrl = mediaFile ? `${baseUrl}${artipodMediaUrl(artipodId, mediaFile)}` : null;
   
   // Format duration as X.X mins and append to title
   let displayTitle = title;
@@ -624,7 +658,7 @@ app.get('/api/artipod/:artipodId', (req, res) => {
   
   const mediaPath = join(artipodPath, mediaFile);
   const stats = statSync(mediaPath);
-  const fileUrl = `/artipods/${artipodId}/${mediaFile}`;
+  const fileUrl = artipodMediaUrl(artipodId, mediaFile);
   
   // Check for thumbnail
   const thumbnailPath = join(artipodPath, 'thumbnail.png');
@@ -638,6 +672,78 @@ app.get('/api/artipod/:artipodId', (req, res) => {
     localPath: mediaPath,
     size: stats.size,
     thumbnail: thumbnailUrl,
+  });
+});
+
+// Create a public, token-gated link for an existing artipod.
+app.post('/api/artipod/:artipodId/share', (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+
+  if (!existsSync(artipodPath) || !findMediaInArtipod(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+
+  const share = createShare(artipodId);
+  res.status(201).json({
+    success: true,
+    token: share.token,
+    url: `https://teamsfetch.mieweb.com/share/${share.token}`,
+  });
+});
+
+// Return share metadata only when the token is active.
+app.get('/share/:token/data', async (req, res) => {
+  const { token } = req.params;
+  const sharedMedia = getSharedMedia(token);
+  if (!sharedMedia) {
+    return res.status(404).json({ error: 'Shared recording not found' });
+  }
+
+  const cachedTranscription = await getCachedTranscriptionForFile(sharedMedia.mediaPath);
+  const editsPath = join(dirname(sharedMedia.mediaPath), 'edits.json');
+  let savedEdits: { editedWords?: unknown; undoStack?: unknown } = {};
+
+  if (existsSync(editsPath)) {
+    try {
+      savedEdits = JSON.parse(readFileSync(editsPath, 'utf-8'));
+    } catch (error) {
+      console.error('Failed to read shared editor state:', error);
+    }
+  }
+
+  res.set({
+    'Cache-Control': 'no-store, private',
+    'Referrer-Policy': 'no-referrer',
+    'X-Robots-Tag': 'noindex, nofollow, noarchive',
+  });
+  res.json({
+    success: true,
+    filename: sharedMedia.mediaFile,
+    url: `/share/${token}/media`,
+    transcript: cachedTranscription?.normalized ?? null,
+    initialEditedWords: Array.isArray(savedEdits.editedWords) ? savedEdits.editedWords : undefined,
+    initialUndoStack: Array.isArray(savedEdits.undoStack) ? savedEdits.undoStack : undefined,
+  });
+});
+
+// Stream media only when the token is active, preserving byte-range requests for seeking.
+app.get('/share/:token/media', (req, res, next) => {
+  const { token } = req.params;
+  const sharedMedia = getSharedMedia(token);
+  if (!sharedMedia) {
+    return res.status(404).json({ error: 'Shared recording not found' });
+  }
+
+  res.set({
+    'Cache-Control': 'no-store, private',
+    'Referrer-Policy': 'no-referrer',
+    'X-Robots-Tag': 'noindex, nofollow, noarchive',
+  });
+  res.sendFile(sharedMedia.mediaPath, (error) => {
+    if (error) {
+      next(error);
+    }
   });
 });
 
@@ -785,7 +891,7 @@ app.put('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
   }
 });
 
-// Delete editor state (protected)
+// Delete editor state
 app.delete('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
@@ -1302,7 +1408,7 @@ app.get('/api/file/:filename', (req, res) => {
   });
 });
 
-// Delete artipod (protected)
+// Delete artipod
 app.delete('/api/artipod/:artipodId', requireAuth, async (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
@@ -1324,17 +1430,19 @@ app.delete('/api/artipod/:artipodId', requireAuth, async (req, res) => {
     
     // Remove featured entry if exists
     const featuredRemoved = removeFeatured(artipodId);
+    const sharesRemoved = removeSharesForArtipod(artipodId);
     
     // Delete the entire artipod folder
     rmSync(artipodPath, { recursive: true, force: true });
     
-    console.log(`Deleted artipod: ${artipodId} (cache entries: ${cacheRemoved}, was featured: ${featuredRemoved})`);
+    console.log(`Deleted artipod: ${artipodId} (cache entries: ${cacheRemoved}, was featured: ${featuredRemoved}, shares removed: ${sharesRemoved})`);
     
     res.json({
       success: true,
       message: 'Artipod deleted',
       cacheEntriesRemoved: cacheRemoved,
       featuredRemoved,
+      sharesRemoved,
     });
   } catch (error) {
     console.error('Artipod deletion error:', error);
@@ -1414,7 +1522,7 @@ app.get('/api/featured/:filename', (req, res) => {
   res.json({ isFeatured: featured });
 });
 
-// Upload thumbnail (protected) - saves thumbnail.png inside artipod folder
+// Upload thumbnail - saves thumbnail.png inside artipod folder
 app.post('/api/thumbnail', requireAuth, (req, res) => {
   const { imageData, artipodId } = req.body;
   
@@ -1459,7 +1567,7 @@ app.post('/api/thumbnail', requireAuth, (req, res) => {
   }
 });
 
-// Add or update a featured pulse (protected) - now uses artipodId
+// Add or update a featured pulse - now uses artipodId
 app.post('/api/featured', requireAuth, (req, res) => {
   const { artipodId, title, thumbnail } = req.body;
   
@@ -1477,7 +1585,7 @@ app.post('/api/featured', requireAuth, (req, res) => {
   res.json({ success: true, pulse });
 });
 
-// Remove a featured pulse (protected)
+// Remove a featured pulse
 app.delete('/api/featured/:filename', requireAuth, (req, res) => {
   const { filename } = req.params;
   const removed = removeFeatured(filename);
@@ -1528,7 +1636,7 @@ if (existsSync(clientDistPath)) {
   });
 }
 
-app.listen(port, () => {
+app.listen(port, '127.0.0.1', () => {
   console.log(`Available providers: ${providerRegistry.list().map((p) => p.displayName).join(', ')}`);
   console.log(`Server running on http://localhost:${port}`);
   if (existsSync(clientDistPath)) {
