@@ -257,7 +257,9 @@ function App() {
   // spend their quota instead of the shared one — and the server stops requiring
   // the app key, because the shared budget is no longer at stake.
   const [agentProvider, setAgentProvider] = useState<AgentProvider | null>(() => loadAgentProvider());
-  const [showProviderForm, setShowProviderForm] = useState(false);
+  /** The model menu under the composer. Opens itself when there is no AI at
+   *  all, since otherwise nothing on screen says how to get one. */
+  const [showModelMenu, setShowModelMenu] = useState(false);
   /** The inline key row, shown only after picking a provider that needs one. */
   const [showKeyForm, setShowKeyForm] = useState(false);
   /** Mirrors RecordButton's own vocabulary so the mic reports its own state. */
@@ -1115,7 +1117,7 @@ function App() {
   const openAgentModal = () => {
     if (agentStatus === 'running') return;
     // With no provider at all, the useful thing to show first is how to add one.
-    setShowProviderForm(!agentAvailable && !agentProvider);
+    setShowModelMenu(!agentAvailable && !agentProvider);
     setShowAgentModal(true);
   };
 
@@ -1434,7 +1436,13 @@ function App() {
       : 'No AI configured';
 
   const renderAgentModal = () => (
-    <Modal open={showAgentModal} onOpenChange={(open) => !open && setShowAgentModal(false)} size="md">
+    <Modal
+      open={showAgentModal}
+      onOpenChange={(open) => !open && setShowAgentModal(false)}
+      size="md"
+      // `relative` so the connect-your-own-AI pane can cover this dialog.
+      className="relative"
+    >
       <ModalHeader>
         <div className="flex min-w-0 items-center gap-3">
           <div
@@ -1549,8 +1557,8 @@ function App() {
         <div className="flex items-center gap-1 px-1">
           <Dropdown
             placement="top-start"
-            open={showProviderForm}
-            onOpenChange={setShowProviderForm}
+            open={showModelMenu}
+            onOpenChange={setShowModelMenu}
             trigger={
               <button
                 type="button"
@@ -1567,7 +1575,12 @@ function App() {
               {agentAvailable && (
                 <DropdownItem
                   icon={<PickedMark on={!agentProvider} />}
-                  onClick={() => { clearAgentProvider(); setAgentProvider(null); setShowKeyForm(false); }}
+                  onClick={() => {
+                    clearAgentProvider();
+                    setAgentProvider(null);
+                    setShowKeyForm(false);
+                    setShowModelMenu(false);
+                  }}
                 >
                   Shared AI — free, rate-limited
                 </DropdownItem>
@@ -1585,6 +1598,7 @@ function App() {
                       model: preset.model,
                     }));
                     setShowKeyForm(true);
+                    setShowModelMenu(false);
                   }}
                 >
                   {preset.label}
@@ -1595,7 +1609,12 @@ function App() {
                   <DropdownSeparator />
                   <DropdownItem
                     variant="danger"
-                    onClick={() => { clearAgentProvider(); setAgentProvider(null); setShowKeyForm(false); }}
+                    onClick={() => {
+                      clearAgentProvider();
+                      setAgentProvider(null);
+                      setShowKeyForm(false);
+                      setShowModelMenu(false);
+                    }}
                   >
                     Forget my key
                   </DropdownItem>
@@ -1605,55 +1624,101 @@ function App() {
           </Dropdown>
         </div>
 
-        {/* Only once a provider needing a key has been picked. Inline and
-            single-row: a key is one thing to paste, not a form to fill in. */}
-        {showKeyForm && (
-          <div className="border-border flex flex-col gap-2 rounded-lg border p-2">
-            {providerPreset === 'custom' && (
+      </ModalFooter>
+
+      {/* Connecting an account is its own task, not something you do while
+          reading the conversation — so it takes the whole dialog rather than
+          squeezing a form into the footer and pushing the chat around. A second
+          pane over the same modal, not a nested one: stacked dialogs are hard
+          to escape from and this has an obvious way back. */}
+      {showKeyForm && (
+        <div
+          className="bg-card absolute inset-0 z-10 flex flex-col rounded-[inherit]"
+          role="group"
+          aria-label="Connect your own AI"
+          onKeyDown={(e) => {
+            // Otherwise Escape closes the ENTIRE dialog and takes a half-typed
+            // key with it. Here it means "back to the chat".
+            if (e.key === 'Escape') {
+              e.stopPropagation();
+              setShowKeyForm(false);
+            }
+          }}
+        >
+          <ModalHeader>
+            <div className="flex min-w-0 items-center gap-3">
+              <div
+                aria-hidden="true"
+                className="bg-primary-800 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white"
+              >
+                <SparklesIcon size="sm" />
+              </div>
+              <div className="min-w-0">
+                <ModalTitle>Use your own AI</ModalTitle>
+                <p className="text-muted-foreground m-0 truncate text-xs">
+                  {PROVIDER_PRESETS.find((p) => p.id === providerPreset)?.label ?? 'Custom'}
+                </p>
+              </div>
+            </div>
+            <Button size="sm" variant="ghost" onClick={() => setShowKeyForm(false)}>
+              Back
+            </Button>
+          </ModalHeader>
+
+          <ModalBody>
+            <div className="flex flex-col gap-3">
+              <p className="text-muted-foreground m-0 text-sm">
+                Your key stays in this browser. It is sent with the request that uses it,
+                and is never written to the server or into the pulse.
+              </p>
+              {providerPreset === 'custom' && (
+                <Input
+                  label="Base URL"
+                  value={providerDraft.base}
+                  onChange={(e) => setProviderDraft((d) => ({ ...d, base: e.target.value }))}
+                  placeholder="https://…/v1"
+                />
+              )}
               <Input
-                value={providerDraft.base}
-                onChange={(e) => setProviderDraft((d) => ({ ...d, base: e.target.value }))}
-                placeholder="https://…/v1"
-                aria-label="Base URL"
-              />
-            )}
-            <div className="flex gap-1">
-              <Input
-                className="min-w-0 flex-1"
+                label="Model"
                 value={providerDraft.model}
                 onChange={(e) => setProviderDraft((d) => ({ ...d, model: e.target.value }))}
-                placeholder="Model"
-                aria-label="Model"
+                placeholder="openai/gpt-oss-120b"
               />
               <Input
-                className="min-w-0 flex-1"
+                label="API key"
                 type="password"
                 value={providerDraft.apiKey}
                 onChange={(e) => setProviderDraft((d) => ({ ...d, apiKey: e.target.value }))}
-                placeholder="API key — stays in this browser"
-                aria-label="API key"
+                placeholder="sk-…"
+                autoFocus
               />
-              <Button
-                size="sm"
-                disabled={!providerDraft.apiKey.trim() || !providerDraft.model.trim()}
-                onClick={() => {
-                  const next = {
-                    ...providerDraft,
-                    base: providerDraft.base.trim(),
-                    model: providerDraft.model.trim(),
-                    apiKey: providerDraft.apiKey.trim(),
-                  };
-                  saveAgentProvider(next);
-                  setAgentProvider(next);
-                  setShowKeyForm(false);
-                }}
-              >
-                Save
-              </Button>
             </div>
-          </div>
-        )}
-      </ModalFooter>
+          </ModalBody>
+
+          <ModalFooter>
+            <Button variant="ghost" onClick={() => setShowKeyForm(false)}>
+              Cancel
+            </Button>
+            <Button
+              disabled={!providerDraft.apiKey.trim() || !providerDraft.model.trim()}
+              onClick={() => {
+                const next = {
+                  ...providerDraft,
+                  base: providerDraft.base.trim(),
+                  model: providerDraft.model.trim(),
+                  apiKey: providerDraft.apiKey.trim(),
+                };
+                saveAgentProvider(next);
+                setAgentProvider(next);
+                setShowKeyForm(false);
+              }}
+            >
+              Save
+            </Button>
+          </ModalFooter>
+        </div>
+      )}
     </Modal>
   );
 
@@ -2170,7 +2235,12 @@ function App() {
                 <>
                   <Button
                     size="sm"
-                    variant={showHistoryPanel ? 'secondary' : 'ghost'}
+                    // Secondary at rest, not ghost. History opens a surface, the
+                    // same job as ✨ AI edit beside it, so it should carry the
+                    // same weight — ghost left it reading as a label until you
+                    // happened to hover it. Ghost stays right for Edit/Del/Cut
+                    // inside the editor, where a row of filled buttons is noise.
+                    variant="secondary"
                     onClick={() => setShowHistoryPanel((v) => !v)}
                     title="Review, compare, or roll back to an earlier version"
                     aria-label="Edit history"
