@@ -45,7 +45,31 @@
  * of every button in the app — including the send button. In `layer(base)` a
  * component's own utility classes still win, which is the whole point.
  */
+/**
+ * RecordButton's waveform animation. The component ships the `animate-waveform`
+ * CLASS, but the keyframes behind it live in @mieweb/ui's own src/styles/base.css
+ * — a stylesheet this app never imports. Without them the five bars render at a
+ * fixed height and sit perfectly still while recording, which reads as a frozen
+ * microphone. Copied verbatim from that file.
+ *
+ * Note this is a decorative loop, not an audio meter: the bars pulse on a timer
+ * with staggered delays and do not track what the mic is hearing.
+ */
+@keyframes waveform {
+  0%,
+  100% {
+    transform: scaleY(0.3);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
 @layer base {
+  .animate-waveform {
+    animation: waveform 0.5s ease-in-out infinite;
+  }
+
   button,
   input,
   optgroup,

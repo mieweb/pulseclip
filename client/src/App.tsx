@@ -1562,7 +1562,10 @@ function App() {
             trigger={
               <button
                 type="button"
-                className="text-muted-foreground hover:text-foreground -mx-1 flex min-w-0 items-center gap-1 rounded px-1 py-0.5 text-xs transition-colors"
+                // rounded-full, not `rounded`: everything around it is a pill or
+                // a 2xl — the starter chips, the composer — and a 4px corner on
+                // one small control reads as a stray element from another kit.
+                className="text-muted-foreground hover:text-foreground hover:bg-muted -mx-1 flex min-w-0 items-center gap-1 rounded-full px-2 py-0.5 text-xs transition-colors"
               >
                 <SparklesIcon size="sm" className="h-3 w-3 shrink-0" />
                 <span className="truncate">{agentModelLabel}</span>
