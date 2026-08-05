@@ -1626,16 +1626,19 @@ function App() {
 
       </ModalFooter>
 
-      {/* Connecting an account is its own task, not something you do while
-          reading the conversation — so it takes the whole dialog rather than
-          squeezing a form into the footer and pushing the chat around. A second
-          pane over the same modal, not a nested one: stacked dialogs are hard
-          to escape from and this has an obvious way back. */}
+      {/* Connecting an account is a small side task, so it gets a small card
+          floating over a dimmed conversation rather than a whole second screen.
+          The chat stays visible behind it — you can still see what you were
+          doing, which a full takeover hides. Rendered inside this modal rather
+          than as a nested one: stacked dialogs fight over focus and Escape.
+
+          One way out, not three. Escape, the scrim and Cancel all do the same
+          thing, so there is no separate Back button on top of them. */}
       {showKeyForm && (
         <div
-          className="bg-card absolute inset-0 z-10 flex flex-col rounded-[inherit]"
-          role="group"
-          aria-label="Connect your own AI"
+          className="absolute inset-0 z-10 flex items-center justify-center rounded-[inherit] bg-black/40 p-4 backdrop-blur-[2px]"
+          role="presentation"
+          onClick={() => setShowKeyForm(false)}
           onKeyDown={(e) => {
             // Otherwise Escape closes the ENTIRE dialog and takes a half-typed
             // key with it. Here it means "back to the chat".
@@ -1645,7 +1648,16 @@ function App() {
             }
           }}
         >
-          <ModalHeader>
+          <div
+            className="bg-card border-border flex w-full max-w-sm flex-col gap-3 rounded-xl border p-4 shadow-xl"
+            // A group, not a nested role="dialog": it does not trap focus, and
+            // claiming to be a second dialog inside the first misdescribes it
+            // to a screen reader.
+            role="group"
+            aria-label="Use your own AI"
+            // The card is not the scrim; clicking inside it must not dismiss.
+            onClick={(e) => e.stopPropagation()}
+          >
             <div className="flex min-w-0 items-center gap-3">
               <div
                 aria-hidden="true"
@@ -1654,69 +1666,64 @@ function App() {
                 <SparklesIcon size="sm" />
               </div>
               <div className="min-w-0">
-                <ModalTitle>Use your own AI</ModalTitle>
+                <h2 className="m-0 text-base font-semibold">Use your own AI</h2>
                 <p className="text-muted-foreground m-0 truncate text-xs">
                   {PROVIDER_PRESETS.find((p) => p.id === providerPreset)?.label ?? 'Custom'}
                 </p>
               </div>
             </div>
-            <Button size="sm" variant="ghost" onClick={() => setShowKeyForm(false)}>
-              Back
-            </Button>
-          </ModalHeader>
 
-          <ModalBody>
-            <div className="flex flex-col gap-3">
-              <p className="text-muted-foreground m-0 text-sm">
-                Your key stays in this browser. It is sent with the request that uses it,
-                and is never written to the server or into the pulse.
-              </p>
-              {providerPreset === 'custom' && (
-                <Input
-                  label="Base URL"
-                  value={providerDraft.base}
-                  onChange={(e) => setProviderDraft((d) => ({ ...d, base: e.target.value }))}
-                  placeholder="https://…/v1"
-                />
-              )}
+            <p className="text-muted-foreground m-0 text-xs">
+              Your key stays in this browser. It is sent with the request that uses it,
+              and is never written to the server or into the pulse.
+            </p>
+
+            {providerPreset === 'custom' && (
               <Input
-                label="Model"
-                value={providerDraft.model}
-                onChange={(e) => setProviderDraft((d) => ({ ...d, model: e.target.value }))}
-                placeholder="openai/gpt-oss-120b"
+                label="Base URL"
+                value={providerDraft.base}
+                onChange={(e) => setProviderDraft((d) => ({ ...d, base: e.target.value }))}
+                placeholder="https://…/v1"
               />
-              <Input
-                label="API key"
-                type="password"
-                value={providerDraft.apiKey}
-                onChange={(e) => setProviderDraft((d) => ({ ...d, apiKey: e.target.value }))}
-                placeholder="sk-…"
-                autoFocus
-              />
+            )}
+            <Input
+              label="Model"
+              value={providerDraft.model}
+              onChange={(e) => setProviderDraft((d) => ({ ...d, model: e.target.value }))}
+              placeholder="openai/gpt-oss-120b"
+            />
+            <Input
+              label="API key"
+              type="password"
+              value={providerDraft.apiKey}
+              onChange={(e) => setProviderDraft((d) => ({ ...d, apiKey: e.target.value }))}
+              placeholder="sk-…"
+              autoFocus
+            />
+
+            <div className="flex justify-end gap-2">
+              <Button size="sm" variant="ghost" onClick={() => setShowKeyForm(false)}>
+                Cancel
+              </Button>
+              <Button
+                size="sm"
+                disabled={!providerDraft.apiKey.trim() || !providerDraft.model.trim()}
+                onClick={() => {
+                  const next = {
+                    ...providerDraft,
+                    base: providerDraft.base.trim(),
+                    model: providerDraft.model.trim(),
+                    apiKey: providerDraft.apiKey.trim(),
+                  };
+                  saveAgentProvider(next);
+                  setAgentProvider(next);
+                  setShowKeyForm(false);
+                }}
+              >
+                Save
+              </Button>
             </div>
-          </ModalBody>
-
-          <ModalFooter>
-            <Button variant="ghost" onClick={() => setShowKeyForm(false)}>
-              Cancel
-            </Button>
-            <Button
-              disabled={!providerDraft.apiKey.trim() || !providerDraft.model.trim()}
-              onClick={() => {
-                const next = {
-                  ...providerDraft,
-                  base: providerDraft.base.trim(),
-                  model: providerDraft.model.trim(),
-                  apiKey: providerDraft.apiKey.trim(),
-                };
-                saveAgentProvider(next);
-                setAgentProvider(next);
-                setShowKeyForm(false);
-              }}
-            >
-              Save
-            </Button>
-          </ModalFooter>
+          </div>
         </div>
       )}
     </Modal>
