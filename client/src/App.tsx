@@ -9,10 +9,20 @@ import { Card, CardContent } from '@mieweb/ui/components/Card';
 import { Button } from '@mieweb/ui/components/Button';
 import { Alert } from '@mieweb/ui/components/Alert';
 import { Input } from '@mieweb/ui/components/Input';
-import { Textarea } from '@mieweb/ui/components/Textarea';
 import { Checkbox } from '@mieweb/ui/components/Checkbox';
 import { Modal, ModalHeader, ModalTitle, ModalClose, ModalBody, ModalFooter } from '@mieweb/ui/components/Modal';
 import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
+// The AI-edit surface is built from the same primitives as Ozwell chat, Hey
+// Ozwell and SuperChat rather than restyled to look like them — the sparkles
+// mark, the bubble shell, the starter pills and the composer are all the
+// library's, so this surface tracks the design system instead of drifting.
+import {
+  SparklesIcon,
+  ChatBubble,
+  SuggestedActions,
+  type AISuggestedAction,
+} from '@mieweb/ui/components/AI/chat';
+import { MessageComposer } from '@mieweb/ui/components/Messaging';
 import { AudioLines, Film, Zap, Scissors, Type } from 'lucide-react';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
@@ -52,6 +62,49 @@ interface VersionInfo {
 }
 
 declare const __BUILD_COMMIT_HASH__: string | undefined;
+
+/**
+ * Openers for the AI-edit composer.
+ *
+ * An instruction is required — the agent has no default behaviour to fall back
+ * on — so a blank box is a dead end for anyone who has not already decided what
+ * they want. These are phrased as complete instructions rather than topics
+ * because they are sent verbatim.
+ */
+const AGENT_STARTERS: AISuggestedAction[] = [
+  {
+    id: 'shorten',
+    label: 'Cut to 60 seconds',
+    prompt: 'Cut this down to about 60 seconds, keeping the main point intact.',
+  },
+  {
+    id: 'tighten',
+    label: 'Tighten the rambling',
+    prompt: 'Cut the false starts, repeated sentences and any rambling, but keep every distinct point.',
+  },
+  {
+    id: 'pace',
+    label: 'Speed up the slow parts',
+    prompt: 'Speed up the slower stretches to about 1.5x, leaving the important explanations at normal speed.',
+  },
+];
+
+/**
+ * What a past agent run did, drawn from its checkpoint. `durationMs` is the
+ * length the server MEASURED for the result (the closed loop that checks a
+ * declared target), not how long the run took.
+ */
+function describeAgentTurn(turn: CheckpointMeta): string {
+  const parts: string[] = [];
+  if (typeof turn.opCount === 'number') {
+    parts.push(`${turn.opCount} ${turn.opCount === 1 ? 'edit' : 'edits'}`);
+  }
+  if (typeof turn.durationMs === 'number' && turn.durationMs > 0) {
+    const total = Math.round(turn.durationMs / 1000);
+    parts.push(`${Math.floor(total / 60)}:${String(total % 60).padStart(2, '0')} long`);
+  }
+  return parts.join(' · ') || 'Proposed an edit';
+}
 
 /** Landing-page feature highlights */
 const FEATURES = [
@@ -224,6 +277,8 @@ function App() {
   /** The live media element — from MediaEditor's player when viewing, else the standalone player */
   const getMediaElement = () => playerRef.current?.mediaElement ?? mediaRef.current;
   const contentRef = useRef<HTMLElement>(null);
+  /** The AI-edit modal's scrolling body, so it can open on the newest turn. */
+  const agentScrollRef = useRef<HTMLDivElement>(null);
   const hasAutoTranscribed = useRef(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Held in a ref so the save callbacks handed to MediaEditor keep a stable
@@ -1044,10 +1099,16 @@ function App() {
     setShowAgentModal(true);
   };
 
-  const handleAgentConfirm = () => {
-    if (!agentInstructions.trim()) return;
+  /**
+   * Takes the instruction from the composer rather than from state: the
+   * composer clears its (controlled) value before awaiting `onSend`, so by the
+   * time this runs `agentInstructions` is already empty.
+   */
+  const handleAgentConfirm = (instruction: string) => {
+    const text = instruction.trim();
+    if (!text || !canRunAgent) return;
     setShowAgentModal(false);
-    handleAgentEdit(agentInstructions);
+    handleAgentEdit(text);
   };
 
   /**
@@ -1275,60 +1336,111 @@ function App() {
   /** A run needs a provider — this server's, or one this browser supplied. */
   const canRunAgent = agentAvailable || !!agentProvider;
 
+  /**
+   * The agent runs already on this pulse, oldest first, up to the version being
+   * viewed. Not decoration: the server replays the LAST agent run into the next
+   * prompt, so this is the context a follow-up instruction actually gets. Runs
+   * ahead of the cursor are excluded — after an undo they describe a state that
+   * is no longer on screen.
+   */
+  const agentTurns = checkpoints.filter(
+    (cp) => cp.kind === 'ai' && (historyIndex < 0 || cp.index <= historyIndex)
+  );
+
+  /**
+   * Open on the newest turn, the way any chat does — the run a follow-up
+   * instruction builds on is the last one, and it is the one off the bottom of
+   * a long history.
+   */
+  useEffect(() => {
+    if (!showAgentModal) return;
+    const body = agentScrollRef.current;
+    if (body) body.scrollTop = body.scrollHeight;
+  }, [showAgentModal, agentTurns.length]);
+
+  const agentAccountLine = agentProvider
+    ? `${agentProvider.model} · your account`
+    : agentAvailable
+      ? 'Shared AI · free for everyone here'
+      : 'No AI configured';
+
   const renderAgentModal = () => (
-    <Modal open={showAgentModal} onOpenChange={(open) => !open && setShowAgentModal(false)} size="sm">
+    <Modal open={showAgentModal} onOpenChange={(open) => !open && setShowAgentModal(false)} size="md">
       <ModalHeader>
-        <ModalTitle>AI Edit</ModalTitle>
+        <div className="flex min-w-0 items-center gap-3">
+          <div
+            aria-hidden="true"
+            className="bg-primary-800 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-white"
+          >
+            <SparklesIcon size="sm" />
+          </div>
+          <div className="min-w-0">
+            <ModalTitle>AI Edit</ModalTitle>
+            {/* Whose quota a run spends, stated before it is spent rather than
+                after — the shared lane is rate-limited across everyone. */}
+            <p className="text-muted-foreground m-0 truncate text-xs">{agentAccountLine}</p>
+          </div>
+        </div>
         <ModalClose />
       </ModalHeader>
-      <ModalBody>
+      <ModalBody ref={agentScrollRef}>
         <div className="flex flex-col gap-3">
-          <p className="m-0 text-sm text-muted-foreground">
-            Say what you want and the AI proposes it in the editor for you to review.
-            It can cut, reorder, and change the pace. Nothing is exported, and ⌘Z
-            undoes the whole proposal.
-          </p>
-          <Textarea
-            label="What should it do?"
-            value={agentInstructions}
-            onChange={(e) => setAgentInstructions(e.target.value)}
-            placeholder="e.g. cut this to 60 seconds, drop the pricing tangent, and speed up the setup"
-            helperText="Silent gaps come out automatically. Use ✂️ for fine-grained cleanup."
-            rows={3}
-            autoFocus
-            disabled={!canRunAgent}
-          />
-
-          {/* Which account pays for the run. The shared lane is rate-limited and
-              billed to whoever runs this server, so anyone doing real work can
-              point it at their own instead. */}
-          <div className="rounded-lg border border-border p-2.5">
-            {!showProviderForm ? (
-              <div className="flex items-center justify-between gap-2">
-                <div className="min-w-0 text-xs">
-                  {agentProvider ? (
-                    <>
-                      <span className="font-medium">Your own account</span>
-                      <span className="text-muted-foreground">
-                        {' '}· {agentProvider.model} · {maskKey(agentProvider.apiKey)}
-                      </span>
-                    </>
-                  ) : agentAvailable ? (
-                    <>
-                      <span className="font-medium">Shared AI</span>
-                      <span className="text-muted-foreground">
-                        {' '}· free, but rate-limited across everyone using it
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <span className="font-medium">No AI configured</span>
-                      <span className="text-muted-foreground">
-                        {' '}· this server has no provider, so add your own to use AI edits
-                      </span>
-                    </>
-                  )}
+          {agentTurns.length > 0 ? (
+            <div className="flex flex-col gap-3">
+              {agentTurns.map((turn) => (
+                <div key={turn.index} className="flex flex-col gap-2">
+                  <div className="flex justify-end">
+                    <ChatBubble variant="user">
+                      <p className="m-0 text-sm">{turn.label}</p>
+                    </ChatBubble>
+                  </div>
+                  <div className="flex items-start gap-2">
+                    <div
+                      aria-hidden="true"
+                      className="bg-primary-800 mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white"
+                    >
+                      <SparklesIcon size="sm" />
+                    </div>
+                    <ChatBubble variant="assistant">
+                      {turn.summary && <p className="m-0 text-sm">{turn.summary}</p>}
+                      <p className="text-muted-foreground m-0 text-xs">{describeAgentTurn(turn)}</p>
+                    </ChatBubble>
+                  </div>
                 </div>
+              ))}
+              <p className="text-muted-foreground m-0 text-xs">
+                The next instruction builds on the most recent run — “now make it 30
+                seconds” knows what it just did.
+              </p>
+            </div>
+          ) : (
+            <p className="text-muted-foreground m-0 text-sm">
+              Say what you want and the AI proposes it in the editor for you to review.
+              It can cut, reorder, and change the pace. Nothing is exported, and ⌘Z
+              undoes the whole proposal.
+            </p>
+          )}
+        </div>
+      </ModalBody>
+
+      {/* Which account pays for the run — static chrome, not the tail of a
+          scrolling conversation. The shared lane is rate-limited and billed to
+          whoever runs this server, so the way to point it at your own belongs
+          within reach of the send button, not somewhere back up the history. */}
+      <div className="border-border shrink-0 border-t px-3 pt-2">
+          <div className={showProviderForm ? 'border-border rounded-lg border p-2.5' : ''}>
+            {!showProviderForm ? (
+              // Collapsed, the account itself is already named in the header, so
+              // this row carries only what the header cannot: the catch, and the
+              // way out of it.
+              <div className="flex items-center justify-between gap-2 rounded-lg px-1 py-1 text-left">
+                <span className="text-muted-foreground min-w-0 text-xs">
+                  {agentProvider
+                    ? `${maskKey(agentProvider.apiKey)} · stays in this browser`
+                    : agentAvailable
+                      ? 'Free, but rate-limited across everyone using it'
+                      : 'This server has no provider, so add your own to use AI edits'}
+                </span>
                 <div className="flex shrink-0 gap-1">
                   <Button size="sm" variant="ghost" onClick={() => setShowProviderForm(true)}>
                     {agentProvider ? 'Change' : 'Use my own key'}
@@ -1422,18 +1534,40 @@ function App() {
               </div>
             )}
           </div>
-        </div>
-      </ModalBody>
-      <ModalFooter>
-        <Button variant="ghost" onClick={() => setShowAgentModal(false)}>
-          Cancel
-        </Button>
-        <Button
-          onClick={handleAgentConfirm}
-          disabled={!agentInstructions.trim() || !canRunAgent}
-        >
-          ✨ AI edit
-        </Button>
+      </div>
+      {/* The composer IS the action, as on every other AI surface — there is no
+          separate confirm button, and ⏎ sends. Escape and ✕ still cancel. */}
+      <ModalFooter className="flex-col items-stretch gap-2 border-t-0 px-3 pt-2 pb-2">
+        {/* Above the composer rather than up in the body, exactly where AIChat
+            puts them once a conversation has started: buried under a long
+            history they are unreachable without scrolling past the thing they
+            are meant to help you write. */}
+        {canRunAgent && !agentInstructions.trim() && (
+          <SuggestedActions
+            actions={AGENT_STARTERS}
+            onSelect={(action) => setAgentInstructions(action.prompt)}
+            className="px-1"
+          />
+        )}
+        <MessageComposer
+          value={agentInstructions}
+          onValueChange={setAgentInstructions}
+          onSend={({ content }) => handleAgentConfirm(content)}
+          placeholder={
+            canRunAgent
+              ? 'Tell it what to change…'
+              : 'Add an AI provider above to use AI edits'
+          }
+          disabled={!canRunAgent}
+          variant="minimal"
+          autoFocus
+          showAttachmentPicker={false}
+          showCameraButton={false}
+          showCharacterCount={false}
+        />
+        <p className="text-muted-foreground m-0 px-1 text-xs">
+          Silent gaps come out automatically. Use ✂️ for fine-grained cleanup.
+        </p>
       </ModalFooter>
     </Modal>
   );

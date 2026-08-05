@@ -20,3 +20,35 @@
 
 /* Match @mieweb/ui dark mode convention: class or data-theme attribute */
 @custom-variant dark (&:where(.dark, .dark *, [data-theme='dark'], [data-theme='dark'] *));
+
+/**
+ * Two rules borrowed from the preflight this app omits, because @mieweb/ui
+ * components assume preflight has run and are unusable here without them:
+ *
+ * 1. <textarea> falls back to a MONOSPACE font, so every library input rendered
+ *    in Courier here while looking correct everywhere else in MIE.
+ * 2. <button> falls back to the `buttonface` system colour — a light grey that
+ *    is IDENTICAL in light and dark mode. A library component that renders a
+ *    bare button and sets only a text colour (SuggestedActions) therefore came
+ *    out light-grey-on-light-grey in dark mode: measured rgb(212,212,212) on
+ *    rgb(239,239,239), roughly 1.3:1.
+ *
+ * These MUST live in `layer(base)`. Unlayered declarations outrank every
+ * layered one, so at the top level `button { background-color: transparent }`
+ * beats `bg-primary-800` from `layer(utilities)` and flattens the background
+ * of every button in the app — including the composer's send button.
+ */
+@layer base {
+  button,
+  input,
+  optgroup,
+  select,
+  textarea {
+    font-family: inherit;
+  }
+
+  button {
+    background-color: transparent;
+    background-image: none;
+  }
+}
