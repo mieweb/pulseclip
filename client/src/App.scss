@@ -4,364 +4,6 @@
   background: var(--mieweb-background, #fff);
 }
 
-// Sticky banner at top
-.app__banner {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 12px 24px;
-  background: var(--mieweb-card, #fff);
-  backdrop-filter: blur(10px);
-  border-bottom: 1px solid var(--mieweb-border, #e5e7eb);
-  
-  @media (max-width: 600px) {
-    flex-direction: column;
-    gap: 8px;
-    padding: 12px 16px;
-  }
-}
-
-.app__banner-content {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-  
-  @media (max-width: 600px) {
-    flex-direction: column;
-    gap: 4px;
-  }
-}
-
-.app__banner-title {
-  color: var(--mieweb-foreground, #171717);
-  font-size: 20px;
-  font-weight: 600;
-  margin: 0;
-}
-
-.app__banner-tagline {
-  color: var(--mieweb-muted-foreground, #666);
-  font-size: 13px;
-  margin: 0;
-}
-
-.app__banner-links {
-  display: flex;
-  align-items: center;
-  gap: 16px;
-
-  @media (max-width: 600px) {
-    flex-wrap: wrap;
-    justify-content: center;
-    gap: 12px 14px;
-    width: 100%;
-  }
-}
-
-.app__banner-link {
-  color: var(--mieweb-muted-foreground, #888);
-  text-decoration: none;
-  font-size: 13px;
-  transition: color 0.2s;
-  
-  &:hover {
-    color: var(--mieweb-primary-500, #4fc3f7);
-  }
-
-  &--mono {
-    font-family: monospace;
-    font-size: 12px;
-  }
-}
-
-.app__banner-version {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-left: 8px;
-  padding-left: 16px;
-  border-left: 1px solid var(--mieweb-border, #e5e7eb);
-
-  @media (max-width: 600px) {
-    margin-left: 0;
-    padding-left: 0;
-    border-left: none;
-  }
-}
-
-// Landing page main content
-.app__landing {
-  max-width: 900px;
-  margin: 0 auto;
-  padding: 32px 24px;
-  display: flex;
-  flex-direction: column;
-  gap: 40px;
-}
-
-// Upload section - compact
-.app__upload-section {
-  text-align: center;
-}
-
-.app__upload-heading {
-  color: var(--mieweb-muted-foreground, #888);
-  font-size: 14px;
-  font-weight: 500;
-  margin: 0 0 16px 0;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.app__upload-options {
-  display: flex;
-  align-items: stretch;
-  gap: 24px;
-  max-width: 700px;
-  margin: 0 auto;
-  
-  @media (max-width: 700px) {
-    flex-direction: column;
-    align-items: center;
-    gap: 16px;
-  }
-}
-
-.app__upload-container {
-  flex: 1;
-  max-width: 280px;
-  min-width: 200px;
-  
-  // Match height with PulseCam container
-  .file-upload__dropzone {
-    height: 100%;
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-  }
-}
-
-.app__upload-divider {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--mieweb-muted-foreground, #555);
-  font-size: 12px;
-  text-transform: uppercase;
-  letter-spacing: 1px;
-  
-  @media (min-width: 701px) {
-    flex-direction: column;
-    
-    &::before,
-    &::after {
-      content: '';
-      width: 1px;
-      height: 40px;
-      background: var(--mieweb-border, #e5e7eb);
-    }
-    
-    span {
-      padding: 12px 0;
-    }
-  }
-  
-  @media (max-width: 700px) {
-    width: 100%;
-    max-width: 300px;
-    
-    &::before,
-    &::after {
-      content: '';
-      flex: 1;
-      height: 1px;
-      background: var(--mieweb-border, #e5e7eb);
-    }
-    
-    span {
-      padding: 0 16px;
-    }
-  }
-}
-
-.app__pulsecam-container {
-  flex: 1;
-  max-width: 280px;
-  min-width: 200px;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 12px;
-  padding: 24px 16px;
-  border: 2px dashed var(--mieweb-border, #e5e7eb);
-  border-radius: 8px;
-  background: var(--mieweb-muted, #f5f5f5);
-}
-
-.app__pulsecam-hint {
-  margin: 0;
-  font-size: 12px;
-  color: var(--mieweb-muted-foreground, #666);
-}
-
-// Features section
-.app__features {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 16px;
-  
-  @media (max-width: 600px) {
-    grid-template-columns: 1fr;
-  }
-}
-
-.app__feature {
-  text-align: center;
-  padding: 16px 12px;
-  background: var(--mieweb-muted, #f5f5f5);
-  border-radius: 8px;
-  border: 1px solid var(--mieweb-border, #e5e7eb);
-}
-
-.app__feature-icon {
-  font-size: 24px;
-  display: block;
-  margin-bottom: 8px;
-}
-
-.app__feature-title {
-  color: var(--mieweb-foreground, #171717);
-  font-size: 14px;
-  font-weight: 600;
-  margin: 0 0 4px 0;
-}
-
-.app__feature-desc {
-  color: var(--mieweb-muted-foreground, #666);
-  font-size: 12px;
-  margin: 0;
-  line-height: 1.4;
-}
-
-.app__error {
-  margin-top: 16px;
-  padding: 12px 16px;
-  background: var(--mieweb-destructive, #ffebee);
-  color: var(--mieweb-destructive-foreground, #c62828);
-  border-radius: 6px;
-  font-size: 14px;
-}
-
-// Featured pulses section - grid layout for many items
-.app__featured {
-  text-align: center;
-}
-
-.app__featured-title {
-  color: var(--mieweb-muted-foreground, #888);
-  font-size: 14px;
-  font-weight: 500;
-  margin: 0 0 16px 0;
-  text-transform: uppercase;
-  letter-spacing: 0.5px;
-}
-
-.app__featured-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-  gap: 12px;
-  
-  @media (max-width: 400px) {
-    grid-template-columns: repeat(2, 1fr);
-  }
-}
-
-.app__featured-card {
-  display: flex;
-  flex-direction: column;
-  background: var(--mieweb-card, #fff);
-  border-radius: 8px;
-  overflow: hidden;
-  text-decoration: none;
-  transition: all 0.2s ease;
-  border: 1px solid var(--mieweb-border, #e5e7eb);
-  
-  &:hover {
-    background: var(--mieweb-muted, #f5f5f5);
-    border-color: var(--mieweb-primary-500, #4fc3f7);
-    transform: translateY(-2px);
-  }
-}
-
-.app__featured-thumb {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  object-fit: cover;
-}
-
-.app__featured-placeholder {
-  width: 100%;
-  aspect-ratio: 16 / 9;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  background: var(--mieweb-muted, #f5f5f5);
-  font-size: 32px;
-}
-
-.app__featured-pulse-title {
-  padding: 10px 12px;
-  color: var(--mieweb-foreground, #171717);
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-// Legacy featured list styles (remove old ones)
-.app__featured-list {
-  display: none;
-}
-
-.app__featured-link {
-  display: none;
-}
-
-.app__featured-icon {
-  display: none;
-}
-
-// Project links section
-.app__links {
-  margin-top: 32px;
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 12px;
-}
-
-.app__link {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  padding: 8px 14px;
-  background: var(--mieweb-muted, #f5f5f5);
-  color: var(--mieweb-muted-foreground, #888);
-  text-decoration: none;
-  border-radius: 6px;
-  font-size: 13px;
-  transition: all 0.2s ease;
-  
-  &:hover {
-    background: var(--mieweb-border, #e5e7eb);
-    color: var(--mieweb-foreground, #171717);
-  }
-}
 
 // Split view - main working layout
 .app--split {
@@ -669,7 +311,7 @@
   }
 }
 
-// MediaEditor (ui-staging) fills the whole content pane when viewing
+// MediaEditor (@mieweb/ui) fills the whole content pane when viewing
 .app__editor-pane {
   display: flex;
   flex-direction: column;
@@ -681,6 +323,42 @@
 // Keep MediaEditor mounted (preserving edit/UI state) while the data view shows
 .app__hidden-editor {
   display: none;
+}
+
+// The history panel sits beside the editor, so a version and the live timeline
+// are on screen together — comparing them is the whole point, and a modal would
+// cover the thing being compared against.
+.app__content--with-history {
+  flex-direction: row;
+
+  .app__editor-pane {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+}
+
+.app__history-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 clamp(20rem, 26vw, 26rem);
+  min-height: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--color-border, rgb(var(--border)));
+  background: var(--color-card, transparent);
+}
+
+// Below the split point the two panes cannot both be usable, so the panel
+// stacks under the editor and takes a bounded slice rather than crushing it.
+@media (max-width: 60rem) {
+  .app__content--with-history {
+    flex-direction: column;
+
+    .app__history-pane {
+      flex: 0 0 min(50%, 22rem);
+      border-left: none;
+      border-top: 1px solid var(--color-border, rgb(var(--border)));
+    }
+  }
 }
 
 .app__media-pane {
@@ -840,7 +518,9 @@
   }
 }
 
-// API Key Modal
+// Shared-link modal. The API-key and Featured dialogs were rebuilt on the
+// @mieweb/ui Modal, but the share modal added in #29 still uses these raw
+// classes, so they stay until it is lifted too.
 .api-key-modal-overlay {
   position: fixed;
   top: 0;
@@ -923,32 +603,6 @@
 
     &:hover {
       background: var(--mieweb-primary-600, #1976D2);
-    }
-  }
-}
-
-// Featured Modal
-.featured-modal {
-  &__label {
-    display: block;
-    color: var(--mieweb-muted-foreground, #aaa);
-    font-size: 12px;
-    margin-bottom: 16px;
-    
-    input {
-      margin-top: 6px;
-    }
-  }
-  
-  &__preview {
-    margin-bottom: 8px;
-    text-align: center;
-    
-    img {
-      max-width: 100%;
-      max-height: 120px;
-      border-radius: 6px;
-      border: 1px solid var(--mieweb-border, #2a2a4a);
     }
   }
 }

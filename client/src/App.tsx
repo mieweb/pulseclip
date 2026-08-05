@@ -2,13 +2,32 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { FileUpload } from './components/FileUpload';
 import { PulseCamButton } from './components/PulseCamButton';
-import { MediaPlayer, type MediaPlayerRef } from './ui-staging/MediaPlayer';
-import { MediaEditor } from './ui-staging/MediaEditor';
+import { MediaPlayer, type MediaPlayerRef } from '@mieweb/ui/components/MediaPlayer';
+import { MediaEditor } from '@mieweb/ui/components/MediaEditor';
 import { ThemeToggle } from '@mieweb/ui/components/ThemeProvider';
+import { Card, CardContent, CardMedia } from '@mieweb/ui/components/Card';
+import { Button } from '@mieweb/ui/components/Button';
+import { Alert } from '@mieweb/ui/components/Alert';
+import { Input } from '@mieweb/ui/components/Input';
+import { Textarea } from '@mieweb/ui/components/Textarea';
+import { Checkbox } from '@mieweb/ui/components/Checkbox';
+import { Modal, ModalHeader, ModalTitle, ModalClose, ModalBody, ModalFooter } from '@mieweb/ui/components/Modal';
+import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
+import { AudioLines, Film, Zap, Scissors, Type } from 'lucide-react';
 import { BrandSelector, restoreBrand } from './components/BrandSelector';
 import { TranscriptDataView } from './components/TranscriptDataView';
-import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord } from './types';
+import { EditHistoryPanel, type CheckpointMeta } from './components/EditHistoryPanel';
+import { rasterizeLowerThird } from './lib/rasterize';
+import type { Provider, TranscriptionResult, FeaturedPulse, EditableWord, SpeedMarker, PlaybackSpeed } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
+import {
+  loadAgentProvider,
+  saveAgentProvider,
+  clearAgentProvider,
+  maskKey,
+  PROVIDER_PRESETS,
+  type AgentProvider,
+} from './lib/agentProvider';
 import './App.scss';
 
 type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
@@ -17,6 +36,8 @@ type ViewState = 'upload' | 'loading' | 'ready' | 'transcribing' | 'viewing';
 interface SavedEditorState {
   editedWords: EditableWord[];
   undoStack: EditableWord[][];
+  speedMarkers?: SpeedMarker[];
+  defaultSpeed?: PlaybackSpeed;
   savedAt: string;
 }
 
@@ -28,6 +49,42 @@ interface VersionInfo {
 }
 
 declare const __BUILD_COMMIT_HASH__: string | undefined;
+
+/** Landing-page feature highlights */
+const FEATURES = [
+  { Icon: Zap, title: 'Transcribed Instantly', desc: 'Upload and get word-level transcripts in seconds' },
+  { Icon: Scissors, title: 'Word-Level Editing', desc: 'Delete fillers and dead air with a single click' },
+  { Icon: Type, title: 'Edit Like Text', desc: 'Cut and paste video as simply as a text editor' },
+] as const;
+
+/** Featured pulse card with graceful fallback when the thumbnail is missing or unreachable */
+function FeaturedPulseCard({ pulse, onOpen }: { pulse: FeaturedPulse; onOpen: () => void }) {
+  const [thumbFailed, setThumbFailed] = useState(false);
+  const showThumb = pulse.thumbnail && !thumbFailed;
+  return (
+    <a
+      href={`/artipod/${pulse.artipodId}`}
+      className="block w-56 no-underline"
+      onClick={(e) => {
+        e.preventDefault();
+        onOpen();
+      }}
+    >
+      <Card interactive padding="none" className="overflow-hidden">
+        {showThumb ? (
+          <CardMedia src={pulse.thumbnail} alt="" aspectRatio="video" onError={() => setThumbFailed(true)} />
+        ) : (
+          <div className="flex aspect-video items-center justify-center bg-muted">
+            <Film className="h-8 w-8 text-muted-foreground" aria-hidden="true" />
+          </div>
+        )}
+        <CardContent className="p-3">
+          <span className="text-sm font-medium text-foreground">{pulse.title}</span>
+        </CardContent>
+      </Card>
+    </a>
+  );
+}
 
 // Apply the persisted brand color theme before first paint of the app tree
 restoreBrand();
@@ -52,6 +109,11 @@ function App() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [debugMode, setDebugMode] = useState(isDebugEnabled());
+  // The app key still gates export, the agent and (on locked instances) saving
+  // edits. #29 took it off the upload path only, so the state stays.
+  const [apiKey, setApiKey] = useState<string>(() => localStorage.getItem('pulseclip_api_key') || '');
+  const [showApiKeyModal, setShowApiKeyModal] = useState(false);
+  const [pendingApiKey, setPendingApiKey] = useState('');
   const [featuredPulses, setFeaturedPulses] = useState<FeaturedPulse[]>([]);
   const [isCurrentPulseFeatured, setIsCurrentPulseFeatured] = useState(false);
   const [showFeaturedModal, setShowFeaturedModal] = useState(false);
@@ -67,6 +129,49 @@ function App() {
   const [editsLoaded, setEditsLoaded] = useState(false);
   const [cursorTimestampMs, setCursorTimestampMs] = useState<number | null>(null);
   const [latestEditedWords, setLatestEditedWords] = useState<EditableWord[]>([]);
+  const [exportStatus, setExportStatus] = useState<'idle' | 'exporting' | 'success' | 'error'>('idle');
+  // AI editorial-agent status, and an epoch that remounts MediaEditor when the
+  // agent writes a new proposal (initialEditedWords only applies on mount)
+  const [agentStatus, setAgentStatus] = useState<'idle' | 'running' | 'success' | 'error'>('idle');
+  const [editorEpoch, setEditorEpoch] = useState(0);
+  // What the agent should do, and the history of what has been done to this
+  // pulse — by the agent AND by hand, on one timeline. Each entry checkpoints
+  // the complete edit state, so a version can be rolled back by name rather
+  // than by counting ⌘Z presses, and `historyIndex` is the undo/redo cursor.
+  const [showAgentModal, setShowAgentModal] = useState(false);
+  const [agentInstructions, setAgentInstructions] = useState('');
+  // A caller's own LLM account, held in this browser only. When set, agent runs
+  // spend their quota instead of the shared one — and the server stops requiring
+  // the app key, because the shared budget is no longer at stake.
+  const [agentProvider, setAgentProvider] = useState<AgentProvider | null>(() => loadAgentProvider());
+  const [showProviderForm, setShowProviderForm] = useState(false);
+  const [providerDraft, setProviderDraft] = useState<AgentProvider>(() => ({
+    provider: 'openai',
+    base: PROVIDER_PRESETS[0].base,
+    model: PROVIDER_PRESETS[0].model,
+    apiKey: '',
+  }));
+  const [providerPreset, setProviderPreset] = useState(PROVIDER_PRESETS[0].id);
+  const [checkpoints, setCheckpoints] = useState<CheckpointMeta[]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  /** How many word-level undo steps the editor still holds. Lets ⌘Z hand over
+   *  to the version timeline only once the editor has nothing left of its own. */
+  const [editorUndoDepth, setEditorUndoDepth] = useState(0);
+  const [showHistoryPanel, setShowHistoryPanel] = useState(false);
+  const [restoringIndex, setRestoringIndex] = useState<number | null>(null);
+  const [showExportModal, setShowExportModal] = useState(false);
+  const [exportName, setExportName] = useState('');
+  const [exportCaptions, setExportCaptions] = useState(false);
+  // MIE brand lower-third (title bar) baked into the export
+  const [exportLowerThird, setExportLowerThird] = useState(false);
+  const [exportTitle, setExportTitle] = useState('');
+  // Refs mirror the live editor state so stable callbacks (speed saves, export)
+  // always read current values without re-creating on every edit
+  const latestEditedWordsRef = useRef<EditableWord[]>([]);
+  const latestSpeedState = useRef<{ speedMarkers: SpeedMarker[]; defaultSpeed: PlaybackSpeed }>({
+    speedMarkers: [],
+    defaultSpeed: 1,
+  });
   const [thumbnailStatus, setThumbnailStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
   const [versionInfo, setVersionInfo] = useState<VersionInfo | null>(null);
   const mediaRef = useRef<HTMLAudioElement | HTMLVideoElement>(null);
@@ -76,6 +181,22 @@ function App() {
   const contentRef = useRef<HTMLElement>(null);
   const hasAutoTranscribed = useRef(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  /** Held in a ref so the save callbacks handed to MediaEditor keep a stable
+   *  identity — they are memoized on the artipod, not on the history list. */
+  const historySyncRef = useRef<(() => void) | null>(null);
+  /**
+   * A new transcript rebuilds the whole edit list from scratch, and the editor
+   * saves that rebuild the moment it mounts. It is not a hand edit, and its
+   * words are not even comparable with the previous version's — the baseline
+   * they are indexed against has changed underneath. Recording it would invent
+   * a version nobody made.
+   *
+   * Cleared by the first real interaction with the editor rather than by the
+   * first save: several save paths fire on mount (words and speed both), so a
+   * flag consumed by whichever got there first would still let the other one
+   * through. Nobody has edited anything until somebody touches it.
+   */
+  const transcriptRebuildRef = useRef(false);
 
   // Fetch version info on mount
   useEffect(() => {
@@ -206,11 +327,15 @@ function App() {
     fetch(`/api/artipod/${artipodId}/edits`)
       .then((res) => res.json())
       .then((data) => {
+        setCheckpoints(Array.isArray(data.checkpoints) ? data.checkpoints : []);
+        setHistoryIndex(typeof data.historyIndex === 'number' ? data.historyIndex : -1);
         if (data.hasEdits && data.editedWords) {
           console.log(`Loaded saved edits for artipod ${artipodId}: ${data.editedWords.length} words, ${data.undoStack?.length || 0} undo states`);
           setSavedEditorState({
             editedWords: data.editedWords,
             undoStack: data.undoStack || [],
+            speedMarkers: data.speedMarkers || [],
+            defaultSpeed: data.defaultSpeed ?? 1,
             savedAt: data.savedAt,
           });
         } else {
@@ -220,12 +345,17 @@ function App() {
       .catch((err) => {
         console.error('Failed to load saved edits:', err);
         setSavedEditorState(null);
+        setCheckpoints([]);
       })
       .finally(() => setEditsLoaded(true));
   }, [artipodId]);
 
-  // Save editor state (debounced)
+  // Save editor state (debounced). Editing is an open participation route on
+  // the server, so a missing key must not silently stop edits being saved —
+  // it did, which also meant hand edits were never versioned on an unlocked
+  // instance. The header is sent when there is one and omitted when there is not.
   const saveEditorState = useCallback((editedWords: EditableWord[], undoStack: EditableWord[][]) => {
+    setEditorUndoDepth(undoStack.length);
     if (!artipodId) return;
     
     // Clear any pending save
@@ -239,17 +369,29 @@ function App() {
         method: 'PUT',
         headers: {
           'Content-Type': 'application/json',
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
         },
         body: JSON.stringify({
           editedWords,
           undoStack,
+          recordHistory: !transcriptRebuildRef.current,
           savedAt: new Date().toISOString(),
         }),
       })
         .then((res) => {
           if (!res.ok) {
             console.error('Failed to save edits:', res.status);
+            return;
           }
+          // The server coalesces a burst of hand edits into one version and
+          // tells us where the cursor landed. Pull the list when it moves so
+          // the panel keeps up without remounting the editor.
+          return res.json().then((data) => {
+            if (typeof data?.historyIndex === 'number') {
+              setHistoryIndex((prev) => (prev === data.historyIndex ? prev : data.historyIndex));
+              historySyncRef.current?.();
+            }
+          });
         })
         .catch((err) => {
           console.error('Failed to save edits:', err);
@@ -265,6 +407,50 @@ function App() {
       }
     };
   }, []);
+
+  const handleEditedWordsRender = useCallback((words: EditableWord[]) => {
+    latestEditedWordsRef.current = words;
+    setLatestEditedWords(words);
+  }, []);
+
+  // Persist speed changes (debounced). No undoStack in the body: the server
+  // keeps saved fields that are not sent, so this cannot clobber undo history.
+  const handleSpeedStateChange = useCallback((speedMarkers: SpeedMarker[], defaultSpeed: PlaybackSpeed) => {
+    latestSpeedState.current = { speedMarkers, defaultSpeed };
+    if (!artipodId || latestEditedWordsRef.current.length === 0) return;
+
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    saveTimeoutRef.current = setTimeout(() => {
+      fetch(`/api/artipod/${artipodId}/edits`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
+        body: JSON.stringify({
+          editedWords: latestEditedWordsRef.current,
+          speedMarkers,
+          defaultSpeed,
+          recordHistory: !transcriptRebuildRef.current,
+          savedAt: new Date().toISOString(),
+        }),
+      })
+        .then((res) => (res.ok ? res.json() : null))
+        .then((data) => {
+          // Re-timing a passage is an edit like any other, so it lands on the
+          // same timeline and moves the same cursor.
+          if (typeof data?.historyIndex === 'number') {
+            setHistoryIndex((prev) => (prev === data.historyIndex ? prev : data.historyIndex));
+            historySyncRef.current?.();
+          }
+        })
+        .catch((err) => {
+          console.error('Failed to save speed state:', err);
+        });
+    }, 1000);
+  }, [artipodId, apiKey]);
 
   // Load available providers on mount
   useEffect(() => {
@@ -396,6 +582,7 @@ function App() {
               continue; // Still processing, keep polling
             }
             // Completed - statusData is the transcription result
+            transcriptRebuildRef.current = true;
             setTranscriptionResult(statusData);
             return;
           } else {
@@ -412,6 +599,7 @@ function App() {
       }
 
       const result: TranscriptionResult = await response.json();
+      transcriptRebuildRef.current = true;
       setTranscriptionResult(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Transcription failed');
@@ -660,53 +848,638 @@ function App() {
     }
   };
 
-  // Render Featured Modal
-  const renderFeaturedModal = () => {
-    if (!showFeaturedModal) return null;
-    return (
-      <div className="api-key-modal-overlay" role="dialog" aria-modal="true" aria-labelledby="featured-modal-title">
-        <div className="api-key-modal featured-modal">
-          <h3 id="featured-modal-title">{isCurrentPulseFeatured ? 'Edit Featured Pulse' : 'Mark as Featured'}</h3>
-          <p>Set a display title and optional thumbnail for this featured pulse.</p>
-          <label className="featured-modal__label">
-            Title
-            <input
-              type="text"
-              value={featuredTitle}
-              onChange={(e) => setFeaturedTitle(e.target.value)}
-              placeholder="Enter pulse title"
-              className="api-key-modal__input"
-              onKeyDown={(e) => e.key === 'Enter' && handleFeaturedSubmit()}
-              autoFocus
-            />
-          </label>
-          <label className="featured-modal__label">
-            Thumbnail URL (optional)
-            <input
-              type="url"
-              value={featuredThumbnail}
-              onChange={(e) => setFeaturedThumbnail(e.target.value)}
-              placeholder="https://example.com/thumbnail.jpg"
-              className="api-key-modal__input"
-            />
-          </label>
-          {featuredThumbnail && (
-            <div className="featured-modal__preview">
-              <img src={featuredThumbnail} alt="Thumbnail preview" onError={(e) => (e.currentTarget.style.display = 'none')} />
-            </div>
-          )}
-          <div className="api-key-modal__actions">
-            <button onClick={() => setShowFeaturedModal(false)} className="api-key-modal__cancel">
-              Cancel
-            </button>
-            <button onClick={handleFeaturedSubmit} className="api-key-modal__submit">
-              Save
-            </button>
+  // Export: render the current edits server-side, then download the result
+  const handleExport = async (downloadName: string) => {
+    if (!artipodId || exportStatus === 'exporting') return;
+    setExportStatus('exporting');
+    setError(null);
+
+    try {
+      // Rasterize the MIE lower-third (an @mieweb/ui component) to a PNG the
+      // server composites over the video. Non-fatal: a render hiccup just
+      // exports without the title bar.
+      let lowerThird: string | undefined;
+      if (exportLowerThird) {
+        try {
+          lowerThird = await rasterizeLowerThird(exportTitle.trim() || downloadName || 'PulseClip');
+        } catch (err) {
+          console.error('Lower-third render failed; exporting without it:', err);
+        }
+      }
+
+      const response = await fetch(`/api/artipod/${artipodId}/export`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-API-Key': apiKey,
+        },
+        // Send live editor state; with no edits yet, let the server fall back to edits.json
+        body: JSON.stringify({
+          ...(latestEditedWords.length > 0 ? { editedWords: latestEditedWords } : {}),
+          speedMarkers: latestSpeedState.current.speedMarkers,
+          defaultSpeed: latestSpeedState.current.defaultSpeed,
+          captions: exportCaptions,
+          ...(lowerThird ? { lowerThird } : {}),
+        }),
+      });
+
+      if (response.status === 401) {
+        setExportStatus('idle');
+        setShowApiKeyModal(true);
+        return;
+      }
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        throw new Error(data.error || `Export failed (${response.status})`);
+      }
+
+      const { jobId } = await response.json();
+
+      // Poll until the render completes
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const statusRes = await fetch(`/api/export/status/${jobId}`);
+        const status = await statusRes.json().catch(() => ({}));
+
+        if (statusRes.ok && status.status === 'completed') {
+          // The server file is always export.mp4/.m4a; the chosen name only
+          // affects what the browser saves the download as
+          const ext = (status.filename || 'export.mp4').match(/\.[^.]+$/)?.[0] || '.mp4';
+          const base = downloadName.replace(/\.(mp4|m4a)$/i, '').trim() || 'export';
+          const link = document.createElement('a');
+          link.href = status.downloadUrl;
+          link.download = `${base}${ext}`;
+          document.body.appendChild(link);
+          link.click();
+          link.remove();
+          setExportStatus('success');
+          setTimeout(() => setExportStatus('idle'), 3000);
+          return;
+        }
+
+        if (!statusRes.ok) {
+          throw new Error(status.message || status.error || 'Export failed');
+        }
+      }
+    } catch (err) {
+      console.error('Export failed:', err);
+      setError(err instanceof Error ? err.message : 'Export failed');
+      setExportStatus('error');
+      setTimeout(() => setExportStatus('idle'), 3000);
+    }
+  };
+
+  const openExportModal = () => {
+    const base = mediaFilename.replace(/\.[^.]+$/, '') || 'export';
+    setExportName(`${base}-edited`);
+    if (!exportTitle) setExportTitle(base);
+    setShowExportModal(true);
+  };
+
+  const handleExportConfirm = () => {
+    setShowExportModal(false);
+    handleExport(exportName);
+  };
+
+  const openAgentModal = () => {
+    if (agentStatus === 'running') return;
+    // With no provider at all, the useful thing to show first is how to add one.
+    setShowProviderForm(!agentAvailable && !agentProvider);
+    setShowAgentModal(true);
+  };
+
+  const handleAgentConfirm = () => {
+    if (!agentInstructions.trim()) return;
+    setShowAgentModal(false);
+    handleAgentEdit(agentInstructions);
+  };
+
+  /**
+   * Roll the edit state back to an earlier checkpoint. The history is not
+   * truncated, so a rollback is itself reversible.
+   */
+  const handleRestore = async (index: number) => {
+    if (!artipodId || restoringIndex !== null) return;
+    setRestoringIndex(index);
+    setError(null);
+    try {
+      const res = await fetch(`/api/artipod/${artipodId}/edits/restore`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-API-Key': apiKey },
+        body: JSON.stringify({ index }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.message || data.error || 'Restore failed');
+      }
+      await reloadEdits();
+      // The panel stays open — restoring is usually one step of comparing
+      // several versions, not a thing you do once and leave.
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Restore failed');
+    } finally {
+      setRestoringIndex(null);
+    }
+  };
+
+  /**
+   * Refresh the version list alone.
+   *
+   * Deliberately does NOT remount the editor: hand edits create versions as you
+   * work, and remounting on each one would throw away the cursor and selection
+   * of the person who is still typing.
+   */
+  const refreshHistory = useCallback(async () => {
+    if (!artipodId) return;
+    try {
+      const res = await fetch(`/api/artipod/${artipodId}/edits`);
+      const data = await res.json();
+      setCheckpoints(Array.isArray(data.checkpoints) ? data.checkpoints : []);
+      setHistoryIndex(typeof data.historyIndex === 'number' ? data.historyIndex : -1);
+    } catch {
+      /* the list is a convenience; a failed refresh should not disturb editing */
+    }
+  }, [artipodId]);
+
+  useEffect(() => {
+    historySyncRef.current = refreshHistory;
+  }, [refreshHistory]);
+
+  // Undo and redo are the cursor moving along the timeline. Restoring never
+  // truncates, so stepping back and forward is symmetric; only a NEW edit made
+  // while rewound abandons the versions ahead (the server does that).
+  const canUndoVersion = historyIndex > 0;
+  const canRedoVersion = historyIndex >= 0 && historyIndex < checkpoints.length - 1;
+  const currentCheckpoint = historyIndex >= 0 ? checkpoints[historyIndex] : undefined;
+
+  /**
+   * ⌘Z / ⌘Y — undo and redo, layered over the editor's own word-level undo.
+   *
+   * ⌘Z steps the version timeline in two cases: when the current version is an
+   * AI run (one run can delete two hundred words, and undoing it a word at a
+   * time is not undoing it), and when the editor has nothing left to undo of
+   * its own. In between — while there are still word-level steps to take — the
+   * event falls through untouched, so fine-grained undo keeps working.
+   *
+   * Redo is ⌘⇧Z. ⌘Y is accepted too for people coming from Windows, but it is
+   * NOT advertised: on macOS Chrome ⌘Y opens the browser's own History, and the
+   * browser wins — pressing it in the app opens a tab instead of redoing.
+   */
+  useEffect(() => {
+    if (viewState !== 'viewing') return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      const mod = e.metaKey || e.ctrlKey;
+      if (!mod) return;
+      const key = e.key.toLowerCase();
+      const isRedo = key === 'y' || (key === 'z' && e.shiftKey);
+      const isUndo = key === 'z' && !e.shiftKey;
+      if (!isUndo && !isRedo) return;
+
+      const target = e.target as HTMLElement | null;
+      if (
+        target &&
+        (target.tagName === 'INPUT' ||
+          target.tagName === 'TEXTAREA' ||
+          target.isContentEditable)
+      ) {
+        return;
+      }
+      if (restoringIndex !== null) return;
+
+      // The editor has no redo of its own, so this is additive rather than a
+      // hijack.
+      if (isRedo && canRedoVersion) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleRestore(historyIndex + 1);
+        return;
+      }
+      // An AI run is undone whole. Otherwise the editor gets first refusal on
+      // its own word-level steps, and the timeline picks up once those run out.
+      const editorCanUndo = editorUndoDepth > 0 && currentCheckpoint?.kind !== 'ai';
+      if (isUndo && canUndoVersion && !editorCanUndo) {
+        e.preventDefault();
+        e.stopPropagation();
+        handleRestore(historyIndex - 1);
+      }
+    };
+    // Capture phase, so the decision is made before the editor's own handler
+    // sees the event — and so declining to act leaves it perfectly intact.
+    document.addEventListener('keydown', onKeyDown, true);
+    return () => document.removeEventListener('keydown', onKeyDown, true);
+  }, [
+    viewState,
+    historyIndex,
+    canUndoVersion,
+    canRedoVersion,
+    currentCheckpoint,
+    restoringIndex,
+    editorUndoDepth,
+  ]);
+
+  /** Pull the saved edit state back in and remount the editor to show it */
+  const reloadEdits = async () => {
+    if (!artipodId) return;
+    const editsRes = await fetch(`/api/artipod/${artipodId}/edits`);
+    const edits = await editsRes.json().catch(() => ({}));
+    setCheckpoints(Array.isArray(edits.checkpoints) ? edits.checkpoints : []);
+    setHistoryIndex(typeof edits.historyIndex === 'number' ? edits.historyIndex : -1);
+    // Restoring clears the editor's word-level history server-side, so the
+    // depth must follow it down rather than waiting for a remount to report.
+    setEditorUndoDepth(Array.isArray(edits.undoStack) ? edits.undoStack.length : 0);
+    if (edits.hasEdits && edits.editedWords) {
+      setSavedEditorState({
+        editedWords: edits.editedWords,
+        undoStack: edits.undoStack || [],
+        speedMarkers: edits.speedMarkers || [],
+        defaultSpeed: edits.defaultSpeed ?? 1,
+        savedAt: edits.savedAt,
+      });
+      setEditorEpoch((e) => e + 1);
+    }
+  };
+
+  // AI edit: the model returns an operation list (delete / speed / move) which
+  // the server validates and applies, saved as a reviewable proposal. Poll,
+  // then reload the edits and remount the editor so the proposal — and a
+  // one-step ⌘Z — appear.
+  const handleAgentEdit = async (instructions?: string) => {
+    if (!artipodId || agentStatus === 'running') return;
+    const words = transcriptionResult?.transcript?.words;
+    if (!words || words.length === 0) return;
+    setAgentStatus('running');
+    setError(null);
+
+    try {
+      const response = await fetch(`/api/artipod/${artipodId}/agent-edit`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(apiKey ? { 'X-API-Key': apiKey } : {}),
+        },
+        body: JSON.stringify({
+          words,
+          ...(instructions?.trim() ? { instructions: instructions.trim() } : {}),
+          // Sent per request and never stored server-side. Its presence is also
+          // what tells the server the shared budget is not being spent.
+          ...(agentProvider ? { agent: agentProvider } : {}),
+        }),
+      });
+
+      if (response.status === 401) {
+        setAgentStatus('idle');
+        setShowApiKeyModal(true);
+        return;
+      }
+
+      if (!response.ok) {
+        const data = await response.json().catch(() => ({}));
+        // Prefer `message` — on a 409 the `error` field is just "Busy", while
+        // the message says what's actually happening and what to do about it.
+        throw new Error(data.message || data.error || `AI edit failed (${response.status})`);
+      }
+
+      const { jobId } = await response.json();
+
+      // Poll until the proposal is written
+      for (;;) {
+        await new Promise((resolve) => setTimeout(resolve, 2000));
+        const statusRes = await fetch(`/api/agent-edit/status/${jobId}`);
+        const status = await statusRes.json().catch(() => ({}));
+
+        if (statusRes.ok && status.status === 'completed') {
+          // Load the saved proposal and remount the editor to show it
+          await reloadEdits();
+          setAgentStatus('success');
+          setTimeout(() => setAgentStatus('idle'), 3000);
+          return;
+        }
+
+        if (!statusRes.ok) {
+          throw new Error(status.message || status.error || 'AI edit failed');
+        }
+      }
+    } catch (err) {
+      console.error('AI edit failed:', err);
+      setError(err instanceof Error ? err.message : 'AI edit failed');
+      setAgentStatus('error');
+      setTimeout(() => setAgentStatus('idle'), 3000);
+    }
+  };
+
+  const handleApiKeySubmit = () => {
+    const key = pendingApiKey.trim();
+    if (key) {
+      setApiKey(key);
+      localStorage.setItem('pulseclip_api_key', key);
+    }
+    setShowApiKeyModal(false);
+    setPendingApiKey('');
+  };
+
+  // Render API Key Modal
+  /**
+   * Whether the SERVER has a provider of its own. This branch has no
+   * /api/about probe for it — the dev branch adds one — so it is assumed
+   * present and a run that has none fails with the server's own message.
+   */
+  const agentAvailable = true;
+  /** A run needs a provider — this server's, or one this browser supplied. */
+  const canRunAgent = agentAvailable || !!agentProvider;
+
+  const renderAgentModal = () => (
+    <Modal open={showAgentModal} onOpenChange={(open) => !open && setShowAgentModal(false)} size="sm">
+      <ModalHeader>
+        <ModalTitle>AI Edit</ModalTitle>
+        <ModalClose />
+      </ModalHeader>
+      <ModalBody>
+        <div className="flex flex-col gap-3">
+          <p className="m-0 text-sm text-muted-foreground">
+            Say what you want and the AI proposes it in the editor for you to review.
+            It can cut, reorder, and change the pace. Nothing is exported, and ⌘Z
+            undoes the whole proposal.
+          </p>
+          <Textarea
+            label="What should it do?"
+            value={agentInstructions}
+            onChange={(e) => setAgentInstructions(e.target.value)}
+            placeholder="e.g. cut this to 60 seconds, drop the pricing tangent, and speed up the setup"
+            helperText="Silent gaps come out automatically. Use ✂️ for fine-grained cleanup."
+            rows={3}
+            autoFocus
+            disabled={!canRunAgent}
+          />
+
+          {/* Which account pays for the run. The shared lane is rate-limited and
+              billed to whoever runs this server, so anyone doing real work can
+              point it at their own instead. */}
+          <div className="rounded-lg border border-border p-2.5">
+            {!showProviderForm ? (
+              <div className="flex items-center justify-between gap-2">
+                <div className="min-w-0 text-xs">
+                  {agentProvider ? (
+                    <>
+                      <span className="font-medium">Your own account</span>
+                      <span className="text-muted-foreground">
+                        {' '}· {agentProvider.model} · {maskKey(agentProvider.apiKey)}
+                      </span>
+                    </>
+                  ) : agentAvailable ? (
+                    <>
+                      <span className="font-medium">Shared AI</span>
+                      <span className="text-muted-foreground">
+                        {' '}· free, but rate-limited across everyone using it
+                      </span>
+                    </>
+                  ) : (
+                    <>
+                      <span className="font-medium">No AI configured</span>
+                      <span className="text-muted-foreground">
+                        {' '}· this server has no provider, so add your own to use AI edits
+                      </span>
+                    </>
+                  )}
+                </div>
+                <div className="flex shrink-0 gap-1">
+                  <Button size="sm" variant="ghost" onClick={() => setShowProviderForm(true)}>
+                    {agentProvider ? 'Change' : 'Use my own key'}
+                  </Button>
+                  {agentProvider && (
+                    <Button
+                      size="sm"
+                      variant="ghost"
+                      onClick={() => { clearAgentProvider(); setAgentProvider(null); }}
+                      title="Forget this key and go back to the shared AI"
+                    >
+                      Forget
+                    </Button>
+                  )}
+                </div>
+              </div>
+            ) : (
+              <div className="flex flex-col gap-2">
+                <p className="m-0 text-xs text-muted-foreground">
+                  Your key stays in this browser. It is sent with the request that uses
+                  it and never saved on the server or into the pulse.
+                </p>
+                <div className="flex flex-wrap gap-1">
+                  {PROVIDER_PRESETS.map((preset) => (
+                    <Button
+                      key={preset.id}
+                      size="sm"
+                      variant={providerPreset === preset.id ? 'secondary' : 'ghost'}
+                      onClick={() => {
+                        setProviderPreset(preset.id);
+                        setProviderDraft((d) => ({
+                          ...d,
+                          provider: preset.provider,
+                          base: preset.base,
+                          model: preset.model,
+                        }));
+                      }}
+                    >
+                      {preset.label}
+                    </Button>
+                  ))}
+                </div>
+                {PROVIDER_PRESETS.find((p) => p.id === providerPreset)?.hint && (
+                  <p className="m-0 text-xs text-muted-foreground">
+                    {PROVIDER_PRESETS.find((p) => p.id === providerPreset)?.hint}
+                  </p>
+                )}
+                {providerPreset === 'custom' && (
+                  <Input
+                    label="Base URL"
+                    value={providerDraft.base}
+                    onChange={(e) => setProviderDraft((d) => ({ ...d, base: e.target.value }))}
+                    placeholder="https://…/v1"
+                  />
+                )}
+                <Input
+                  label="Model"
+                  value={providerDraft.model}
+                  onChange={(e) => setProviderDraft((d) => ({ ...d, model: e.target.value }))}
+                  placeholder="openai/gpt-oss-120b"
+                />
+                <Input
+                  label="API key"
+                  type="password"
+                  value={providerDraft.apiKey}
+                  onChange={(e) => setProviderDraft((d) => ({ ...d, apiKey: e.target.value }))}
+                  placeholder="sk-…"
+                />
+                <div className="flex justify-end gap-1">
+                  <Button size="sm" variant="ghost" onClick={() => setShowProviderForm(false)}>
+                    Cancel
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={!providerDraft.apiKey.trim() || !providerDraft.model.trim()}
+                    onClick={() => {
+                      const next = {
+                        ...providerDraft,
+                        base: providerDraft.base.trim(),
+                        model: providerDraft.model.trim(),
+                        apiKey: providerDraft.apiKey.trim(),
+                      };
+                      saveAgentProvider(next);
+                      setAgentProvider(next);
+                      setShowProviderForm(false);
+                    }}
+                  >
+                    Save
+                  </Button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
-      </div>
-    );
-  };
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={() => setShowAgentModal(false)}>
+          Cancel
+        </Button>
+        <Button
+          onClick={handleAgentConfirm}
+          disabled={!agentInstructions.trim() || !canRunAgent}
+        >
+          ✨ AI edit
+        </Button>
+      </ModalFooter>
+    </Modal>
+  );
+
+  // Render API Key Modal
+  const renderExportModal = () => (
+    <Modal open={showExportModal} onOpenChange={(open) => !open && setShowExportModal(false)} size="sm">
+      <ModalHeader>
+        <ModalTitle>Export Video</ModalTitle>
+        <ModalClose />
+      </ModalHeader>
+      <ModalBody>
+        <div className="flex flex-col gap-3">
+          <p className="m-0 text-sm text-muted-foreground">
+            Renders your edits into a new file and downloads it.
+          </p>
+          <Input
+            label="File name"
+            value={exportName}
+            onChange={(e) => setExportName(e.target.value)}
+            placeholder="File name"
+            onKeyDown={(e) => e.key === 'Enter' && handleExportConfirm()}
+            autoFocus
+          />
+          <Checkbox
+            label="Burn captions into the video"
+            checked={exportCaptions}
+            onChange={(e) => setExportCaptions(e.target.checked)}
+          />
+          <Checkbox
+            label="Add MIE title bar (lower-third)"
+            checked={exportLowerThird}
+            onChange={(e) => setExportLowerThird(e.target.checked)}
+          />
+          {exportLowerThird && (
+            <Input
+              label="Title bar text"
+              value={exportTitle}
+              onChange={(e) => setExportTitle(e.target.value)}
+              placeholder="Shown in the on-screen title bar"
+            />
+          )}
+        </div>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={() => setShowExportModal(false)}>
+          Cancel
+        </Button>
+        <Button onClick={handleExportConfirm}>Export</Button>
+      </ModalFooter>
+    </Modal>
+  );
+
+  const renderApiKeyModal = () => (
+    <Modal open={showApiKeyModal} onOpenChange={(open) => !open && setShowApiKeyModal(false)} size="sm">
+      <ModalHeader>
+        <ModalTitle>API Key Required</ModalTitle>
+        <ModalClose />
+      </ModalHeader>
+      <ModalBody>
+        <div className="flex flex-col gap-3">
+          <p className="m-0 text-sm text-muted-foreground">
+            Enter your API key to upload files and use transcription.
+          </p>
+          <Input
+            type="password"
+            label="API key"
+            hideLabel
+            value={pendingApiKey}
+            onChange={(e) => setPendingApiKey(e.target.value)}
+            placeholder="Enter API key"
+            onKeyDown={(e) => e.key === 'Enter' && handleApiKeySubmit()}
+            autoFocus
+          />
+        </div>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={() => setShowApiKeyModal(false)}>
+          Cancel
+        </Button>
+        <Button onClick={handleApiKeySubmit}>Save</Button>
+      </ModalFooter>
+    </Modal>
+  );
+
+  // Render Featured Modal
+  const renderFeaturedModal = () => (
+    <Modal open={showFeaturedModal} onOpenChange={(open) => !open && setShowFeaturedModal(false)} size="sm">
+      <ModalHeader>
+        <ModalTitle>{isCurrentPulseFeatured ? 'Edit Featured Pulse' : 'Mark as Featured'}</ModalTitle>
+        <ModalClose />
+      </ModalHeader>
+      <ModalBody>
+        <div className="flex flex-col gap-4">
+          <p className="m-0 text-sm text-muted-foreground">
+            Set a display title and optional thumbnail for this featured pulse.
+          </p>
+          <Input
+            type="text"
+            label="Title"
+            value={featuredTitle}
+            onChange={(e) => setFeaturedTitle(e.target.value)}
+            placeholder="Enter pulse title"
+            onKeyDown={(e) => e.key === 'Enter' && handleFeaturedSubmit()}
+            autoFocus
+          />
+          <Input
+            type="url"
+            label="Thumbnail URL (optional)"
+            value={featuredThumbnail}
+            onChange={(e) => setFeaturedThumbnail(e.target.value)}
+            placeholder="https://example.com/thumbnail.jpg"
+          />
+          {featuredThumbnail && (
+            <div className="overflow-hidden rounded-lg border border-border">
+              <img
+                src={featuredThumbnail}
+                alt="Thumbnail preview"
+                className="block max-h-40 w-full object-cover"
+                onError={(e) => (e.currentTarget.style.display = 'none')}
+              />
+            </div>
+          )}
+        </div>
+      </ModalBody>
+      <ModalFooter>
+        <Button variant="ghost" onClick={() => setShowFeaturedModal(false)}>
+          Cancel
+        </Button>
+        <Button onClick={handleFeaturedSubmit}>Save</Button>
+      </ModalFooter>
+    </Modal>
+  );
 
   const renderShareModal = () => {
     if (!showShareModal) return null;
@@ -752,12 +1525,12 @@ function App() {
   if (viewState === 'loading') {
     return (
       <div className="app app--upload">
-        <div className="app__upload-container">
-          <h1 className="app__title">🎙️ PulseClip</h1>
-          <div className="app__loading">
-            <div className="app__spinner" />
-            <p>Loading pulse...</p>
-          </div>
+        <div className="flex min-h-screen flex-col items-center justify-center gap-6">
+          <h1 className="m-0 flex items-center gap-2 text-2xl font-semibold text-foreground">
+            <AudioLines className="h-7 w-7 text-primary-800 dark:text-primary-400" aria-hidden="true" />
+            PulseClip
+          </h1>
+          <SpinnerWithLabel size="lg" label="Loading pulse..." />
         </div>
       </div>
     );
@@ -767,37 +1540,41 @@ function App() {
   if (viewState === 'upload') {
     return (
       <div className="app app--upload">
+        {renderApiKeyModal()}
         {renderFeaturedModal()}
-        
+
         {/* Sticky header banner */}
-        <header className="app__banner">
-          <div className="app__banner-content">
-            <h1 className="app__banner-title">🎙️ PulseClip</h1>
-            <p className="app__banner-tagline">Word-level transcripts for audio &amp; video</p>
+        <header className="sticky top-0 z-40 flex flex-wrap items-center justify-between gap-x-6 gap-y-2 border-b border-border bg-background/95 px-6 py-3 backdrop-blur">
+          <div className="flex items-baseline gap-3">
+            <h1 className="m-0 flex items-center gap-2 text-lg font-semibold text-foreground">
+              <AudioLines className="h-5 w-5 shrink-0 self-center text-primary-800 dark:text-primary-400" aria-hidden="true" />
+              PulseClip
+            </h1>
+            <p className="m-0 hidden text-sm text-muted-foreground md:block">Word-level transcripts for audio &amp; video</p>
           </div>
-          <nav className="app__banner-links" aria-label="Project links">
+          <nav className="flex flex-wrap items-center gap-1" aria-label="Project links">
             <BrandSelector />
             <ThemeToggle
               mode="three-way"
               variant="ghost"
               aria-label="Toggle color theme"
             />
-            <a href="https://github.com/mieweb/pulseclip" target="_blank" rel="noopener noreferrer" className="app__banner-link">
+            <a href="https://github.com/mieweb/pulseclip" target="_blank" rel="noopener noreferrer" className="rounded-md px-2 py-1.5 text-sm text-muted-foreground no-underline transition-colors hover:bg-muted hover:text-foreground">
               GitHub
             </a>
-            <a href="https://github.com/mieweb/pulseclip/blob/main/IMPLEMENTATION.md" target="_blank" rel="noopener noreferrer" className="app__banner-link">
+            <a href="https://github.com/mieweb/pulseclip/blob/main/IMPLEMENTATION.md" target="_blank" rel="noopener noreferrer" className="rounded-md px-2 py-1.5 text-sm text-muted-foreground no-underline transition-colors hover:bg-muted hover:text-foreground">
               Docs
             </a>
-            <a href="https://github.com/mieweb/pulseclip/issues/new" target="_blank" rel="noopener noreferrer" className="app__banner-link">
+            <a href="https://github.com/mieweb/pulseclip/issues/new" target="_blank" rel="noopener noreferrer" className="rounded-md px-2 py-1.5 text-sm text-muted-foreground no-underline transition-colors hover:bg-muted hover:text-foreground">
               Report Issue
             </a>
             {versionInfo && (
-              <span className="app__banner-version">
+              <span className="ml-2 flex items-center gap-2 border-l border-border pl-3 text-xs">
                 <a
                   href={versionInfo.commitUrl || '#'}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="app__banner-link app__banner-link--mono"
+                  className="font-mono text-muted-foreground no-underline hover:text-foreground"
                   title={`Commit: ${versionInfo.commitHash}`}
                 >
                   {versionInfo.commitHash.slice(0, 7)}
@@ -807,7 +1584,7 @@ function App() {
                     href="https://github.com/mieweb/pulseclip/blob/main/RELEASE_NOTES.md"
                     target="_blank"
                     rel="noopener noreferrer"
-                    className="app__banner-link"
+                    className="text-muted-foreground no-underline hover:text-foreground"
                     title="Release Notes"
                   >
                     {new Date(versionInfo.commitDate).toLocaleDateString()}
@@ -818,75 +1595,52 @@ function App() {
           </nav>
         </header>
 
-        <main className="app__landing">
-          {/* Featured pulses - prominent */}
-          {featuredPulses.length > 0 && (
-            <section className="app__featured" aria-label="Featured pulses">
-              <h2 className="app__featured-title">Featured Pulses</h2>
-              <div className="app__featured-grid">
-                {featuredPulses.map((pulse) => (
-                  <a
-                    key={pulse.artipodId}
-                    href={`/artipod/${pulse.artipodId}`}
-                    className="app__featured-card"
-                    onClick={(e) => {
-                      e.preventDefault();
-                      navigate(`/artipod/${pulse.artipodId}`);
-                    }}
-                  >
-                    {pulse.thumbnail ? (
-                      <img src={pulse.thumbnail} alt="" className="app__featured-thumb" />
-                    ) : (
-                      <div className="app__featured-placeholder">🎬</div>
-                    )}
-                    <span className="app__featured-pulse-title">{pulse.title}</span>
-                  </a>
-                ))}
-              </div>
-            </section>
-          )}
+        <main className="mx-auto w-full max-w-5xl px-6 py-10">
+          <div className="flex flex-col gap-12">
+            {/* Featured pulses - prominent */}
+            {featuredPulses.length > 0 && (
+              <section aria-label="Featured pulses">
+                <h2 className="m-0 mb-4 text-center text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+                  Featured Pulses
+                </h2>
+                <div className="flex flex-wrap justify-center gap-4">
+                  {featuredPulses.map((pulse) => (
+                    <FeaturedPulseCard
+                      key={pulse.artipodId}
+                      pulse={pulse}
+                      onOpen={() => navigate(`/artipod/${pulse.artipodId}`)}
+                    />
+                  ))}
+                </div>
+              </section>
+            )}
 
-          {/* Compact upload area */}
-          <section className="app__upload-section">
-            <h2 className="app__upload-heading">Upload Your Own</h2>
-            <div className="app__upload-options">
-              <div className="app__pulsecam-container">
+            {/* Compact upload area */}
+            <section aria-label="Upload">
+              <h2 className="m-0 mb-4 text-center text-sm font-semibold uppercase tracking-widest text-muted-foreground">
+                Upload Your Own
+              </h2>
+              <div className="grid items-stretch gap-6 md:grid-cols-2">
                 <PulseCamButton onError={(err) => setError(err)} />
-                <p className="app__pulsecam-hint">Record directly from your phone</p>
-              </div>
-              <div className="app__upload-divider">
-                <span>or</span>
-              </div>
-              <div className="app__upload-container">
+                {/* Upload auth moved to the OAuth boundary at the origin (#29),
+                    so FileUpload no longer takes an API key or an auth-error hook. */}
                 <FileUpload onFileUploaded={handleFileUploaded} disabled={false} />
               </div>
-            </div>
-          </section>
+            </section>
 
-          {/* Features for first-time visitors */}
-          <section className="app__features" aria-label="Features">
-            <div className="app__feature">
-              <span className="app__feature-icon">⚡</span>
-              <h3 className="app__feature-title">Transcribed Instantly</h3>
-              <p className="app__feature-desc">Upload and get word-level transcripts in seconds</p>
-            </div>
-            <div className="app__feature">
-              <span className="app__feature-icon">✂️</span>
-              <h3 className="app__feature-title">Word-Level Editing</h3>
-              <p className="app__feature-desc">Delete fillers and dead air with a single click</p>
-            </div>
-            <div className="app__feature">
-              <span className="app__feature-icon">📝</span>
-              <h3 className="app__feature-title">Edit Like Text</h3>
-              <p className="app__feature-desc">Cut and paste video as simply as a text editor</p>
-            </div>
-          </section>
+            {/* Features for first-time visitors */}
+            <section aria-label="Features" className="grid gap-4 md:grid-cols-3">
+              {FEATURES.map(({ Icon, title, desc }) => (
+                <Card key={title} padding="md" className="text-center">
+                  <Icon className="mx-auto h-6 w-6 text-primary-800 dark:text-primary-400" aria-hidden="true" />
+                  <h3 className="m-0 mt-3 text-sm font-semibold text-foreground">{title}</h3>
+                  <p className="m-0 mt-1 text-sm text-muted-foreground">{desc}</p>
+                </Card>
+              ))}
+            </section>
 
-          {error && (
-            <div className="app__error">
-              <strong>Error:</strong> {error}
-            </div>
-          )}
+            {error && <Alert variant="danger">{error}</Alert>}
+          </div>
         </main>
       </div>
     );
@@ -895,7 +1649,10 @@ function App() {
   // Ready/Transcribing/Viewing states - split view
   return (
     <div className="app app--split">
+      {renderApiKeyModal()}
       {renderFeaturedModal()}
+      {renderExportModal()}
+      {renderAgentModal()}
       {renderShareModal()}
       {/* Compact toolbar */}
       <header className="app__toolbar">
@@ -1009,6 +1766,60 @@ function App() {
 
           {viewState === 'viewing' && (
             <>
+              <select
+                className="app__provider-dropdown"
+                value={selectedProvider}
+                onChange={(e) => setSelectedProvider(e.target.value)}
+                disabled={providers.length === 0}
+                aria-label="Transcription Provider"
+                title="Provider used when re-transcribing"
+              >
+                {providers.map((provider) => (
+                  <option key={provider.id} value={provider.id}>
+                    {provider.displayName}
+                  </option>
+                ))}
+              </select>
+              <Button
+                size="sm"
+                variant="secondary"
+                onClick={openAgentModal}
+                isLoading={agentStatus === 'running'}
+                loadingText="AI editing…"
+                title="Tell the AI what to cut, reorder, or speed up"
+                aria-label="AI edit transcript"
+              >
+                {agentStatus === 'success' ? 'AI edited ✓' :
+                 agentStatus === 'error' ? 'AI edit failed' :
+                 '✨ AI edit'}
+              </Button>
+              {/* Self-gating: only ever non-empty once something has been edited */}
+              {checkpoints.length > 1 && (
+                <>
+                  <Button
+                    size="sm"
+                    variant={showHistoryPanel ? 'secondary' : 'ghost'}
+                    onClick={() => setShowHistoryPanel((v) => !v)}
+                    title="Review, compare, or roll back to an earlier version"
+                    aria-label="Edit history"
+                    aria-pressed={showHistoryPanel}
+                  >
+                    🕘 History ({checkpoints.length - 1})
+                  </Button>
+                </>
+              )}
+              <Button
+                size="sm"
+                onClick={openExportModal}
+                isLoading={exportStatus === 'exporting'}
+                loadingText="Exporting…"
+                title="Render the edited video to a new file"
+                aria-label="Export edited video"
+              >
+                {exportStatus === 'success' ? 'Exported ✓' :
+                 exportStatus === 'error' ? 'Export failed' :
+                 'Export'}
+              </Button>
               <button
                 className={`app__icon-btn app__data-toggle ${viewMode === 'data' ? 'app__data-toggle--active' : ''}`}
                 onClick={() => setViewMode(viewMode === 'data' ? 'transcript' : 'data')}
@@ -1107,22 +1918,76 @@ function App() {
 
       {/* Content area: MediaEditor owns the whole pane when viewing;
           the standalone player + split bar serve the pre-transcription states */}
-      <main className={`app__content${isDragging ? ' app__content--dragging' : ''}`} ref={contentRef}>
+      <main
+        className={`app__content${isDragging ? ' app__content--dragging' : ''}${
+          showHistoryPanel && viewState === 'viewing' && viewMode !== 'data'
+            ? ' app__content--with-history'
+            : ''
+        }`}
+        ref={contentRef}
+      >
         {viewState === 'viewing' && transcriptionResult && editsLoaded ? (
           <>
-            <div className={viewMode === 'data' ? 'app__hidden-editor' : 'app__editor-pane'}>
+            <div
+              className={
+                viewMode === 'data'
+                  ? 'app__hidden-editor'
+                  : `app__editor-pane${showHistoryPanel ? ' app__editor-pane--with-history' : ''}`
+              }
+              // The first touch inside the editor is what turns a rebuilt
+              // transcript back into an editing session someone is responsible
+              // for. Capture phase so it registers before the editor handles it.
+              onPointerDownCapture={() => { transcriptRebuildRef.current = false; }}
+              onKeyDownCapture={() => { transcriptRebuildRef.current = false; }}
+            >
               <MediaEditor
+                key={editorEpoch}
                 src={mediaUrl!}
                 transcript={transcriptionResult.transcript}
                 initialEditedWords={savedEditorState?.editedWords}
                 initialUndoStack={savedEditorState?.undoStack}
+                initialSpeedMarkers={savedEditorState?.speedMarkers}
+                initialDefaultSpeed={savedEditorState?.defaultSpeed}
                 onEditorStateChange={saveEditorState}
                 onHasEditsChange={setHasEdits}
                 onCursorTimestampChange={setCursorTimestampMs}
-                onEditedWordsRender={setLatestEditedWords}
+                onEditedWordsRender={handleEditedWordsRender}
+                onSpeedStateChange={handleSpeedStateChange}
+                // The editor's Undo is word-level and runs out; these let the
+                // same control keep going into the version timeline rather than
+                // putting a second Undo somewhere else on screen.
+                canUndoBeyond={canUndoVersion && restoringIndex === null}
+                onUndoBeyond={() => handleRestore(historyIndex - 1)}
+                undoBeyondLabel={checkpoints[historyIndex - 1]?.label}
+                // Only offered once this pulse actually has versions to move
+                // between — the same gate as the History button. Before that
+                // there is nothing to redo, and a permanently greyed control
+                // reads as broken rather than inapplicable.
+                canRedo={canRedoVersion && restoringIndex === null}
+                onRedo={
+                  checkpoints.length > 1
+                    ? () => handleRestore(historyIndex + 1)
+                    : undefined
+                }
+                redoLabel={checkpoints[historyIndex + 1]?.label}
                 playerRef={playerRef}
               />
             </div>
+            {/* Beside the editor rather than over it: comparing a version with
+                what is on screen is the point, and a modal hides the thing you
+                are comparing against. */}
+            {showHistoryPanel && viewMode !== 'data' && artipodId && (
+              <EditHistoryPanel
+                checkpoints={checkpoints}
+                historyIndex={historyIndex}
+                artipodId={artipodId}
+                apiKey={apiKey}
+                onRestore={handleRestore}
+                restoringIndex={restoringIndex}
+                onRenamed={refreshHistory}
+                onClose={() => setShowHistoryPanel(false)}
+              />
+            )}
             {viewMode === 'data' && (
               <TranscriptDataView
                 transcript={transcriptionResult.transcript}

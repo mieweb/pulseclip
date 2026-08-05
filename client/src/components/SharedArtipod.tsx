@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'react-router-dom';
 import type { EditableWord, Transcript } from '../types';
-import { MediaEditor } from '../ui-staging/MediaEditor';
-import { MediaPlayer, type MediaKind } from '../ui-staging/MediaPlayer';
+import { MediaEditor } from '@mieweb/ui/components/MediaEditor';
+import { MediaPlayer, type MediaKind } from '@mieweb/ui/components/MediaPlayer';
 import './SharedArtipod.scss';
 
 interface SharedArtipodResponse {

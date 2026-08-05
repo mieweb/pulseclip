@@ -11,6 +11,23 @@ import { getCachedTranscription, getCachedTranscriptionForFile, cacheTranscripti
 import { getFeatured, addFeatured, removeFeatured, isFeatured } from './featured.js';
 import { createShare, getSharedArtipod, removeSharesForArtipod } from './shares.js';
 import { createTusRouter, generatePulseCamDeepLink, cleanupStaleUploads, findArtipodByChecksum, registerChecksum } from './tus.js';
+import { buildExportPlan, buildSrt, renderExport, canBurnSubtitles, EXPORT_FILENAMES } from './export.js';
+import {
+  generateAgentEdit,
+  buildBaseline,
+  parseByoConfig,
+  AgentNotConfiguredError,
+  type AgentOp,
+  type AgentConfig,
+} from './agent.js';
+import {
+  diffCheckpoints,
+  describeChanges,
+  checkpointKind,
+  recordManualEdit,
+  clampIndex,
+  type Checkpoint,
+} from './history.js';
 
 // Load environment variables
 dotenv.config();
@@ -27,6 +44,60 @@ const transcriptionJobs = new Map<string, TranscriptionJob>();
 // File size threshold (in bytes) above which transcription runs async (100MB)
 const ASYNC_TRANSCRIPTION_THRESHOLD = 100 * 1024 * 1024;
 
+// --- Async export (render) job store ---
+interface ExportJob {
+  id: string;
+  status: 'processing' | 'completed' | 'error';
+  downloadUrl?: string;
+  filename?: string;
+  durationMs?: number;
+  srtUrl?: string;
+  error?: string;
+  createdAt: number;
+}
+const exportJobs = new Map<string, ExportJob>();
+
+// --- Async editorial-agent (LLM proposal) job store ---
+interface AgentJob {
+  id: string;
+  status: 'processing' | 'completed' | 'error';
+  result?: {
+    summary: string;
+    ops: AgentOp[];
+    deletedCount: number;
+    contentCount: number;
+    silenceCount: number;
+    durationMs: number;
+    targetSeconds: number | null;
+    rounds: number;
+    provider: string;
+    model: string;
+  };
+  error?: string;
+  /** True when the failure is "no LLM configured" (a 503, not a 500) */
+  notConfigured?: boolean;
+  createdAt: number;
+}
+const agentJobs = new Map<string, AgentJob>();
+
+/**
+ * artipodId -> jobId of the agent run currently holding it. The agent is the one
+ * endpoint that does read-modify-write on edits.json across an await, so it is
+ * the one that can lose a checkpoint to a concurrent caller. Released in a
+ * finally, so a thrown run frees the pulse rather than wedging it forever.
+ */
+const agentLocks = new Map<string, string>();
+
+/**
+ * How many checkpoints an artipod keeps. Each holds a full copy of the edit
+ * list, so this is a disk/history tradeoff — roughly 90KB per entry on a
+ * three-minute video. Raised from ten when hand edits joined the same timeline:
+ * they are far more frequent than agent runs, and a cap that only ever held a
+ * morning's worth of manual work would evict the AI runs people came back for.
+ * Index 0 (the original) is exempt from eviction.
+ */
+const MAX_CHECKPOINTS = 25;
+
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
@@ -39,6 +110,52 @@ function artipodMediaUrl(artipodId: string, filename: string): string {
 
 // Initialize provider registry
 const providerRegistry = initializeProviders();
+
+// Secret key for protected endpoints. This sits alongside the OAuth boundary
+// added in #29 rather than replacing it: with no SECRET_KEY set — the default,
+// and what the OAuth deployments use — requireAuth is a no-op and behaviour is
+// exactly main's. Instances that do set one (dev2, prod) keep their lock.
+const secretKey = process.env.SECRET_KEY;
+
+// Auth middleware for protected endpoints
+/**
+ * The agent is the one participation route that stays key-gated, because a
+ * model call spends money or burns a shared rate limit — unlike CPU work, which
+ * only costs this box some time.
+ *
+ * That reasoning does not apply to a caller spending their OWN account. When a
+ * request carries a complete provider of its own, the shared budget is not at
+ * stake and the app key is not required. Anything else this endpoint touches
+ * (the artipod, its edits) is already writable through the open edit routes, so
+ * this widens who can spend an LLM budget, not what they can reach.
+ */
+const requireAuthUnlessOwnKey: express.RequestHandler = (req, res, next) => {
+  const attempted =
+    !!req.body?.agent &&
+    typeof req.body.agent === 'object' &&
+    Object.values(req.body.agent).some((v) => typeof v === 'string' && v.trim());
+  // A caller who tried to bring their own provider gets the route either way:
+  // if it validates they are spending their own budget, and if it does not the
+  // route answers with the actual reason. Answering "valid API key required" to
+  // a mistyped base URL sends someone to fix the wrong thing entirely — and the
+  // route rejects a bad provider before doing any work, so nothing is reachable
+  // through here that the open edit routes do not already expose.
+  if (attempted) return next();
+  return requireAuth(req, res, next);
+};
+
+const requireAuth: express.RequestHandler = (req, res, next) => {
+  if (!secretKey) {
+    // No secret key configured, allow all requests
+    return next();
+  }
+
+  const providedKey = req.headers['x-api-key'] as string;
+  if (!providedKey || providedKey !== secretKey) {
+    return res.status(401).json({ error: 'Unauthorized', message: 'Valid API key required' });
+  }
+  next();
+};
 
 // Configure multer for file uploads into artipod folders
 const storage = multer.diskStorage({
@@ -146,6 +263,11 @@ app.get('/api/pulsecam/deeplink', (req, res) => {
 
 // Upload pulse - creates an artipod folder with UUID
 // Includes duplicate detection based on file checksum
+//
+// Deliberately NOT behind requireAuth. #29 moved upload behind the OAuth
+// boundary at the origin and dropped the API-key path from FileUpload, so a
+// key gate here would 401 the dropzone with no way for it to answer. Upload
+// stays in the open participation tier; the destructive routes below do not.
 app.post('/api/upload', upload.single('file'), (req, res) => {
   if (!req.file) {
     return res.status(400).json({ error: 'No file uploaded' });
@@ -247,9 +369,10 @@ app.post('/api/transcribe', async (req, res) => {
     }
 
     // Check file size to determine sync vs async transcription
+    // (providers marked alwaysAsync are too slow to hold an HTTP request open)
     const fileSize = existsSync(localPath) ? statSync(localPath).size : 0;
 
-    if (fileSize > ASYNC_TRANSCRIPTION_THRESHOLD) {
+    if (fileSize > ASYNC_TRANSCRIPTION_THRESHOLD || provider.alwaysAsync) {
       // Large file: run transcription asynchronously
       const jobId = randomUUID();
       transcriptionJobs.set(jobId, { id: jobId, status: 'processing', createdAt: Date.now() });
@@ -347,7 +470,7 @@ function findMediaInArtipod(artipodPath: string): string | null {
   if (!existsSync(artipodPath)) return null;
   const files = readdirSync(artipodPath);
   // Find the first media file (exclude known asset files)
-  const assetFiles = ['thumbnail.png', 'thumbnail.jpg', 'transcript.json', 'beats.json', 'edits.json'];
+  const assetFiles = ['thumbnail.png', 'thumbnail.jpg', 'transcript.json', 'beats.json', 'edits.json', ...EXPORT_FILENAMES];
   const mediaFile = files.find(f => !assetFiles.includes(f) && !f.startsWith('.'));
   return mediaFile || null;
 }
@@ -643,40 +766,125 @@ app.get('/api/artipod/:artipodId/edits', (req, res) => {
   try {
     const editsData = readFileSync(editsPath, 'utf-8');
     const edits = JSON.parse(editsData);
-    res.json({ success: true, hasEdits: true, ...edits });
+    // Checkpoints carry a full copy of the edit list each, which on a long
+    // video runs to hundreds of KB per entry. The client needs their words only
+    // when previewing a diff or restoring, both of which have their own route,
+    // so the listing here is metadata.
+    const checkpoints = Array.isArray(edits.checkpoints) ? edits.checkpoints : [];
+    res.json({
+      success: true,
+      hasEdits: true,
+      ...edits,
+      checkpoints: checkpoints.map((cp: Checkpoint, i: number) => summarizeCheckpoint(cp, i)),
+      historyIndex: clampIndex(edits.historyIndex, checkpoints),
+    });
   } catch (error) {
     console.error('Failed to read edits:', error);
     res.status(500).json({ error: 'Failed to read editor state' });
   }
 });
 
-// Save editor state
-app.put('/api/artipod/:artipodId/edits', (req, res) => {
+/** A checkpoint without its payload — everything the history list renders. */
+function summarizeCheckpoint(cp: Checkpoint, index: number) {
+  return {
+    index,
+    at: cp.at,
+    label: cp.label,
+    kind: checkpointKind(cp, index),
+    summary: cp.summary,
+    renamed: !!cp.renamed,
+    opCount: Array.isArray(cp.ops) ? cp.ops.length : undefined,
+    durationMs: cp.durationMs,
+    wordCount: Array.isArray(cp.editedWords)
+      ? cp.editedWords.filter((w) => !w.deleted).length
+      : undefined,
+  };
+}
+
+/** Read edits.json, or null when it is missing or unreadable. */
+function readEdits(artipodId: string): any | null {
+  const editsPath = join(__dirname, '../artipods', artipodId, 'edits.json');
+  if (!existsSync(editsPath)) return null;
+  try {
+    return JSON.parse(readFileSync(editsPath, 'utf-8'));
+  } catch {
+    return null;
+  }
+}
+
+// Save editor state (protected). Fields not sent keep their saved values, so
+// a speed-only save cannot clobber the undo history and vice versa.
+app.put('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
   const { artipodId } = req.params;
-  const { editedWords, undoStack, savedAt } = req.body;
-  
+  const { editedWords, undoStack, speedMarkers, defaultSpeed, savedAt, recordHistory } = req.body;
+
   const artipodPath = join(__dirname, '../artipods', artipodId);
-  
+
   if (!existsSync(artipodPath)) {
     return res.status(404).json({ error: 'Artipod not found' });
   }
-  
+
   if (!editedWords || !Array.isArray(editedWords)) {
     return res.status(400).json({ error: 'editedWords array is required' });
   }
-  
+
   try {
     const editsPath = join(artipodPath, 'edits.json');
+    let existing: any = {};
+    if (existsSync(editsPath)) {
+      try {
+        existing = JSON.parse(readFileSync(editsPath, 'utf-8'));
+      } catch { /* corrupt file: overwrite */ }
+    }
+    const nextSpeedMarkers = speedMarkers ?? existing.speedMarkers ?? [];
+    const nextDefaultSpeed = defaultSpeed ?? existing.defaultSpeed ?? 1;
+
+    // Hand edits join the same timeline as agent runs, but a version per
+    // keystroke would bury the runs people actually look for. A burst of edits
+    // coalesces into one entry, labelled by what it changed. Returns null when
+    // nothing changed — the editor saves on a debounce and on load, so most
+    // calls through here are no-ops.
+    // A save can also be the editor rebuilding itself against a fresh
+    // transcript, which the client flags. That is not an edit anyone made, and
+    // its words are indexed against a different baseline, so diffing it against
+    // the previous version would describe a change that never happened.
+    const recorded =
+      recordHistory === false
+        ? null
+        : recordManualEdit({
+            existing,
+            editedWords,
+            speedMarkers: nextSpeedMarkers,
+            defaultSpeed: nextDefaultSpeed,
+            now: new Date(),
+            maxCheckpoints: MAX_CHECKPOINTS,
+          });
+
     const editsData = {
       editedWords,
-      undoStack: undoStack || [],
+      undoStack: undoStack ?? existing.undoStack ?? [],
+      speedMarkers: nextSpeedMarkers,
+      defaultSpeed: nextDefaultSpeed,
+      checkpoints: recorded ? recorded.checkpoints : existing.checkpoints ?? [],
+      historyIndex: recorded
+        ? recorded.historyIndex
+        : clampIndex(existing.historyIndex, existing.checkpoints ?? []),
       savedAt: savedAt || new Date().toISOString(),
     };
-    
+
     writeFileSync(editsPath, JSON.stringify(editsData, null, 2));
-    console.log(`Saved edits for artipod ${artipodId}: ${editedWords.length} words, ${undoStack?.length || 0} undo states`);
-    
-    res.json({ success: true, savedAt: editsData.savedAt });
+    console.log(`Saved edits for artipod ${artipodId}: ${editedWords.length} words, ${editsData.undoStack.length} undo states, ${editsData.speedMarkers.length} speed markers`);
+    if (recorded) {
+      const tip = recorded.checkpoints[recorded.historyIndex];
+      console.log(`  checkpoint ${recorded.historyIndex} ("${tip?.label}")`);
+    }
+
+    res.json({
+      success: true,
+      savedAt: editsData.savedAt,
+      historyIndex: editsData.historyIndex,
+      checkpointCount: editsData.checkpoints.length,
+    });
   } catch (error) {
     console.error('Failed to save edits:', error);
     res.status(500).json({ error: 'Failed to save editor state' });
@@ -684,7 +892,7 @@ app.put('/api/artipod/:artipodId/edits', (req, res) => {
 });
 
 // Delete editor state
-app.delete('/api/artipod/:artipodId/edits', (req, res) => {
+app.delete('/api/artipod/:artipodId/edits', requireAuth, (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
   
@@ -698,8 +906,486 @@ app.delete('/api/artipod/:artipodId/edits', (req, res) => {
     unlinkSync(editsPath);
     console.log(`Deleted edits for artipod ${artipodId}`);
   }
-  
+
   res.json({ success: true });
+});
+
+// Export: render the edit list to a new media file with ffmpeg (protected).
+// Body may carry { editedWords } (the live editor state); falls back to the
+// saved edits.json. Always async — returns 202 + jobId for polling.
+app.post('/api/artipod/:artipodId/export', requireAuth, async (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+
+  if (!existsSync(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+
+  const mediaFile = findMediaInArtipod(artipodPath);
+  if (!mediaFile) {
+    return res.status(404).json({ error: 'No media file found in artipod' });
+  }
+
+  let editedWords = req.body?.editedWords;
+  let speedMarkers = req.body?.speedMarkers;
+  let defaultSpeed = req.body?.defaultSpeed;
+  const burnCaptions = req.body?.captions === true;
+  // Optional MIE brand lower-third, rasterized client-side to a PNG data URL
+  const lowerThird = typeof req.body?.lowerThird === 'string' ? req.body.lowerThird : undefined;
+
+  // Anything not sent falls back to the saved editor state
+  const editsPath = join(artipodPath, 'edits.json');
+  if ((!editedWords || !speedMarkers) && existsSync(editsPath)) {
+    try {
+      const saved = JSON.parse(readFileSync(editsPath, 'utf-8'));
+      editedWords = editedWords ?? saved.editedWords;
+      speedMarkers = speedMarkers ?? saved.speedMarkers;
+      defaultSpeed = defaultSpeed ?? saved.defaultSpeed;
+    } catch {
+      return res.status(500).json({ error: 'Failed to read saved edits' });
+    }
+  }
+
+  if (!Array.isArray(editedWords) || editedWords.length === 0) {
+    return res.status(400).json({ error: 'editedWords must be a non-empty array' });
+  }
+
+  const plan = buildExportPlan(
+    editedWords,
+    Array.isArray(speedMarkers) ? speedMarkers : [],
+    typeof defaultSpeed === 'number' ? defaultSpeed : 1
+  );
+  if (plan.segments.length === 0) {
+    return res.status(400).json({ error: 'Nothing to export: every word is deleted' });
+  }
+
+  // The SRT sidecar is written whenever there are caption words; it is only
+  // burned into the video when the client asks
+  let srtPath: string | null = null;
+  let srtUrl: string | undefined;
+  if (plan.captionWords.length > 0) {
+    srtPath = join(artipodPath, 'export.srt');
+    writeFileSync(srtPath, buildSrt(plan.captionWords));
+    srtUrl = `/artipods/${artipodId}/export.srt`;
+  }
+
+  let burn = burnCaptions;
+  if (burn && !(await canBurnSubtitles())) {
+    console.warn('Captions requested but this ffmpeg lacks the subtitles filter (libass); rendering without burn');
+    burn = false;
+  }
+
+  const jobId = randomUUID();
+  exportJobs.set(jobId, { id: jobId, status: 'processing', createdAt: Date.now() });
+  console.log(
+    `Export job ${jobId} started for artipod ${artipodId}: ${plan.segments.length} segments` +
+    `${burn ? ', captions burned' : ''}`
+  );
+
+  renderExport(join(artipodPath, mediaFile), artipodPath, plan, burn ? srtPath : null, lowerThird)
+    .then(({ filename, durationMs }) => {
+      exportJobs.set(jobId, {
+        id: jobId,
+        status: 'completed',
+        downloadUrl: `/artipods/${artipodId}/${filename}`,
+        filename,
+        durationMs,
+        srtUrl,
+        createdAt: Date.now(),
+      });
+      console.log(`Export job ${jobId} completed: ${filename} (${Math.round(durationMs / 1000)}s)`);
+    })
+    .catch((error) => {
+      exportJobs.set(jobId, {
+        id: jobId,
+        status: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        createdAt: Date.now(),
+      });
+      console.error(`Export job ${jobId} failed:`, error);
+    });
+
+  res.status(202).json({ jobId, status: 'processing', segmentCount: plan.segments.length });
+});
+
+// Poll for async export job status
+app.get('/api/export/status/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = exportJobs.get(jobId);
+
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  if (job.status === 'completed') {
+    exportJobs.delete(jobId);
+    return res.json({
+      status: 'completed',
+      downloadUrl: job.downloadUrl,
+      filename: job.filename,
+      durationMs: job.durationMs,
+      srtUrl: job.srtUrl,
+    });
+  }
+
+  if (job.status === 'error') {
+    exportJobs.delete(jobId);
+    return res.status(500).json({ error: 'Export failed', message: job.error });
+  }
+
+  res.json({ status: 'processing', jobId });
+});
+
+// Editorial agent (protected): an LLM reads the transcript and proposes content
+// deletions (fillers, false starts, repeats). The proposal is written to
+// edits.json for the human to review in the editor — NEVER auto-exported. The
+// prior editor state is kept as a single undo snapshot, and saved speed
+// settings are preserved. Always async — returns 202 + jobId for polling.
+app.post('/api/artipod/:artipodId/agent-edit', requireAuthUnlessOwnKey, (req, res) => {
+  const { artipodId } = req.params;
+  const artipodPath = join(__dirname, '../artipods', artipodId);
+
+  if (!existsSync(artipodPath)) {
+    return res.status(404).json({ error: 'Artipod not found' });
+  }
+
+  // A caller may bring their own LLM account. Validated here so a bad provider
+  // fails immediately with a readable message rather than 120 seconds later
+  // inside the job. Never logged, never written to edits.json — it lives only
+  // for the duration of this request.
+  let byoConfig: AgentConfig | null = null;
+  try {
+    byoConfig = parseByoConfig(req.body?.agent);
+  } catch (err) {
+    return res.status(400).json({
+      error: 'Provider rejected',
+      message: err instanceof Error ? err.message : 'Could not use that provider.',
+    });
+  }
+
+  const words = req.body?.words;
+  const instructions = typeof req.body?.instructions === 'string' ? req.body.instructions.trim() : '';
+
+  if (!Array.isArray(words) || words.length === 0) {
+    return res.status(400).json({ error: 'words must be a non-empty array of transcript words' });
+  }
+  if (!instructions) {
+    return res.status(400).json({ error: 'Tell the agent what to do — an instruction is required.' });
+  }
+
+  // One agent run per pulse at a time. Two concurrent runs both read edits.json,
+  // both write it, and the loser's checkpoint is gone — the person sees an edit
+  // they never asked for and a history entry that vanished. Rejecting is the
+  // honest outcome: the caller knows their run didn't happen, which a silent
+  // overwrite never tells them.
+  const running = agentLocks.get(artipodId);
+  if (running) {
+    return res.status(409).json({
+      error: 'Busy',
+      message: 'An AI edit is already running on this pulse. Wait for it to finish.',
+      jobId: running,
+    });
+  }
+
+  const jobId = randomUUID();
+  agentLocks.set(artipodId, jobId);
+  agentJobs.set(jobId, { id: jobId, status: 'processing', createdAt: Date.now() });
+  console.log(`Agent-edit job ${jobId} started for artipod ${artipodId}: ${words.length} transcript words`);
+
+  (async () => {
+    const editsPath = join(artipodPath, 'edits.json');
+    let existing: any = {};
+    if (existsSync(editsPath)) {
+      try { existing = JSON.parse(readFileSync(editsPath, 'utf-8')); } catch { existing = {}; }
+    }
+    const priorEditedWords =
+      Array.isArray(existing.editedWords) && existing.editedWords.length > 0
+        ? existing.editedWords
+        : buildBaseline(words);
+    const priorSpeedMarkers = Array.isArray(existing.speedMarkers) ? existing.speedMarkers : [];
+    const priorDefaultSpeed =
+      typeof existing.defaultSpeed === 'number' ? existing.defaultSpeed : 1;
+
+    // Hand the model its own last turn so a follow-up ("now make it shorter")
+    // is a revision rather than a fresh guess. Search back for the last AI run
+    // rather than taking the tail: hand edits share this timeline now, so the
+    // most recent checkpoint is often not one the agent produced.
+    const lastAgentRun: Checkpoint | null = (() => {
+      const all: Checkpoint[] = Array.isArray(existing.checkpoints) ? existing.checkpoints : [];
+      for (let i = all.length - 1; i > 0; i--) {
+        if (checkpointKind(all[i], i) === 'ai') return all[i];
+      }
+      return null;
+    })();
+
+    const result = await generateAgentEdit({
+      words,
+      instructions,
+      defaultSpeed: priorDefaultSpeed,
+      prior:
+        lastAgentRun && Array.isArray(lastAgentRun.ops)
+          ? {
+              instruction: lastAgentRun.label,
+              ops: lastAgentRun.ops,
+              durationMs: lastAgentRun.durationMs,
+            }
+          : undefined,
+      // Present only when the caller brought their own account.
+      config: byoConfig ?? undefined,
+    });
+
+    // Two histories, different jobs. undoStack is the editor's ⌘Z — fine-grained
+    // and word-level. Checkpoints are commits: one per agent run, labelled with
+    // the instruction that produced it, holding the COMPLETE state. Word-only
+    // snapshots would silently lose speed and ordering once ops can change them,
+    // leaving a mixed state that never existed.
+    const priorCheckpoints: Checkpoint[] = Array.isArray(existing.checkpoints)
+      ? existing.checkpoints
+      : [];
+    let checkpoints = [...priorCheckpoints];
+    if (checkpoints.length === 0) {
+      checkpoints.push({
+        at: existing.savedAt || new Date().toISOString(),
+        label: 'Before AI edits',
+        kind: 'original',
+        editedWords: priorEditedWords,
+        speedMarkers: priorSpeedMarkers,
+        defaultSpeed: priorDefaultSpeed,
+      });
+    } else {
+      // Running the agent while rewound abandons the versions ahead, exactly as
+      // a hand edit does — otherwise redo would offer a future from a lineage
+      // this run just replaced.
+      const cursor = clampIndex(existing.historyIndex, checkpoints);
+      if (cursor < checkpoints.length - 1) checkpoints = checkpoints.slice(0, cursor + 1);
+    }
+    checkpoints.push({
+      at: new Date().toISOString(),
+      label: instructions,
+      kind: 'ai',
+      summary: result.summary,
+      ops: result.ops,
+      // Persisted so the next run can be told how long its own last edit ran
+      durationMs: result.durationMs,
+      editedWords: result.editedWords,
+      speedMarkers: result.speedMarkers,
+      defaultSpeed: priorDefaultSpeed,
+    });
+    // Cap the history, but never drop the original — it is the one people
+    // reach for when an iteration goes wrong.
+    let historyIndex = checkpoints.length - 1;
+    while (checkpoints.length > MAX_CHECKPOINTS) {
+      checkpoints.splice(1, 1);
+      historyIndex--;
+    }
+
+    const editsData = {
+      editedWords: result.editedWords,
+      // An agent run is a new baseline, not a word-level step, so it leaves the
+      // editor's undo stack empty. Pushing the pre-run words onto it instead
+      // made the two undo paths disagree: MediaEditor's Undo button drains its
+      // own stack before it will call onUndoBeyond, so the button undid a word
+      // while ⌘Z (which knows the current checkpoint is an AI run) undid the
+      // whole run. Only the button moved, so the timeline cursor stayed put and
+      // the speed markers — which live on the checkpoint, not the stack — were
+      // left behind. The checkpoint holds the complete prior state, so the
+      // timeline is the right granularity for undoing this.
+      undoStack: [],
+      speedMarkers: result.speedMarkers,
+      defaultSpeed: priorDefaultSpeed,
+      checkpoints,
+      historyIndex,
+      savedAt: new Date().toISOString(),
+    };
+    writeFileSync(editsPath, JSON.stringify(editsData, null, 2));
+
+    return result;
+  })()
+    .then((result) => {
+      agentJobs.set(jobId, {
+        id: jobId,
+        status: 'completed',
+        result: {
+          summary: result.summary,
+          ops: result.ops,
+          deletedCount: result.deletedCount,
+          contentCount: result.contentCount,
+          silenceCount: result.silenceCount,
+          durationMs: result.durationMs,
+          targetSeconds: result.targetSeconds,
+          rounds: result.rounds,
+          provider: result.provider,
+          model: result.model,
+        },
+        createdAt: Date.now(),
+      });
+      console.log(
+        `Agent-edit job ${jobId} completed: deleted ${result.deletedCount}/${result.contentCount} words + ${result.silenceCount} silences (${result.provider}/${result.model})`
+      );
+    })
+    .catch((error) => {
+      const notConfigured = error instanceof AgentNotConfiguredError;
+      agentJobs.set(jobId, {
+        id: jobId,
+        status: 'error',
+        error: error instanceof Error ? error.message : String(error),
+        notConfigured,
+        createdAt: Date.now(),
+      });
+      console.error(`Agent-edit job ${jobId} failed:`, error);
+    })
+    .finally(() => {
+      // Only clear if we still own it. A lock re-taken by a later run must not
+      // be released by this one finishing late.
+      if (agentLocks.get(artipodId) === jobId) agentLocks.delete(artipodId);
+    });
+
+  res.status(202).json({ jobId, status: 'processing' });
+});
+
+// Poll for async agent-edit job status
+app.get('/api/agent-edit/status/:jobId', (req, res) => {
+  const { jobId } = req.params;
+  const job = agentJobs.get(jobId);
+
+  if (!job) {
+    return res.status(404).json({ error: 'Job not found' });
+  }
+
+  if (job.status === 'completed') {
+    agentJobs.delete(jobId);
+    return res.json({ status: 'completed', ...job.result });
+  }
+
+  if (job.status === 'error') {
+    agentJobs.delete(jobId);
+    // 503 when the server simply has no LLM configured (e.g. the dev box before
+    // a key is seeded); 500 for a genuine LLM/validation failure.
+    return res.status(job.notConfigured ? 503 : 500).json({
+      error: 'Agent edit failed',
+      message: job.error,
+      notConfigured: job.notConfigured,
+    });
+  }
+
+  res.json({ status: 'processing', jobId });
+});
+
+/**
+ * Roll the edit state back to a checkpoint — "scrap that, go back to how it was".
+ *
+ * Restoring does not truncate the history: later checkpoints stay listed so a
+ * rollback is itself reversible. The current state becomes a copy of the chosen
+ * checkpoint; nothing is destroyed.
+ *
+ * Open, like the editing routes it belongs with. Undo and redo run through here,
+ * and a key requirement would break them on a locked instance while protecting
+ * nothing — anyone able to reach this can already rewrite the same state through
+ * PUT /edits.
+ */
+app.post('/api/artipod/:artipodId/edits/restore', (req, res) => {
+  const { artipodId } = req.params;
+  const editsPath = join(__dirname, '../artipods', artipodId, 'edits.json');
+
+  if (!existsSync(editsPath)) {
+    return res.status(404).json({ error: 'No saved edits for this artipod' });
+  }
+
+  let edits: any;
+  try {
+    edits = JSON.parse(readFileSync(editsPath, 'utf-8'));
+  } catch {
+    return res.status(500).json({ error: 'Could not read the saved edits' });
+  }
+
+  const checkpoints = Array.isArray(edits.checkpoints) ? edits.checkpoints : [];
+  const index = Number(req.body?.index);
+  if (!Number.isInteger(index) || index < 0 || index >= checkpoints.length) {
+    return res.status(400).json({
+      error: `index must be between 0 and ${Math.max(0, checkpoints.length - 1)}`,
+    });
+  }
+
+  const target = checkpoints[index];
+  const restored = {
+    ...edits,
+    editedWords: target.editedWords,
+    speedMarkers: Array.isArray(target.speedMarkers) ? target.speedMarkers : [],
+    defaultSpeed: typeof target.defaultSpeed === 'number' ? target.defaultSpeed : 1,
+    // The editor's own ⌘Z history describes a different sequence of states and
+    // would be misleading against restored words, so it starts clean.
+    undoStack: [],
+    // The cursor is what makes undo and redo a pair: moving it back and forward
+    // is the whole operation, and editing while it is behind the tip is what
+    // decides the versions ahead are abandoned.
+    historyIndex: index,
+    savedAt: new Date().toISOString(),
+  };
+  writeFileSync(editsPath, JSON.stringify(restored, null, 2));
+  console.log(`Restored artipod ${artipodId} to checkpoint ${index} ("${target.label}")`);
+
+  res.json({ success: true, index, label: target.label });
+});
+
+/**
+ * What changed at a checkpoint, compared against the one before it.
+ *
+ * Computed rather than stored: histories written before this existed still get
+ * a diff, and it stays correct if the diff itself is ever improved. Cheap
+ * enough that caching would be premature — a few hundred words either side.
+ */
+app.get('/api/artipod/:artipodId/edits/history/:index/diff', (req, res) => {
+  const { artipodId } = req.params;
+  const edits = readEdits(artipodId);
+  if (!edits) {
+    return res.status(404).json({ error: 'No saved edits for this artipod' });
+  }
+  const checkpoints: Checkpoint[] = Array.isArray(edits.checkpoints) ? edits.checkpoints : [];
+  const index = Number(req.params.index);
+  if (!Number.isInteger(index) || index < 0 || index >= checkpoints.length) {
+    return res.status(400).json({
+      error: `index must be between 0 and ${Math.max(0, checkpoints.length - 1)}`,
+    });
+  }
+  const diff = diffCheckpoints(index === 0 ? null : checkpoints[index - 1], checkpoints[index]);
+  res.json({
+    success: true,
+    index,
+    label: checkpoints[index].label,
+    kind: checkpointKind(checkpoints[index], index),
+    ...diff,
+  });
+});
+
+/**
+ * Rename a version. Marks it `renamed`, which also closes it to further
+ * amendment — once someone has named a burst, later edits start a new entry
+ * rather than silently rewriting their label.
+ */
+app.put('/api/artipod/:artipodId/edits/history/:index/label', (req, res) => {
+  const { artipodId } = req.params;
+  const editsPath = join(__dirname, '../artipods', artipodId, 'edits.json');
+  const edits = readEdits(artipodId);
+  if (!edits) {
+    return res.status(404).json({ error: 'No saved edits for this artipod' });
+  }
+  const checkpoints: Checkpoint[] = Array.isArray(edits.checkpoints) ? edits.checkpoints : [];
+  const index = Number(req.params.index);
+  if (!Number.isInteger(index) || index < 0 || index >= checkpoints.length) {
+    return res.status(400).json({
+      error: `index must be between 0 and ${Math.max(0, checkpoints.length - 1)}`,
+    });
+  }
+  const label = typeof req.body?.label === 'string' ? req.body.label.trim() : '';
+  if (!label) {
+    return res.status(400).json({ error: 'label is required' });
+  }
+  if (label.length > 200) {
+    return res.status(400).json({ error: 'label must be 200 characters or fewer' });
+  }
+  checkpoints[index] = { ...checkpoints[index], label, renamed: true };
+  writeFileSync(editsPath, JSON.stringify({ ...edits, checkpoints }, null, 2));
+  res.json({ success: true, index, label });
 });
 
 // Legacy route - redirect old filename format to artipod lookup
@@ -731,7 +1417,7 @@ app.get('/api/file/:filename', (req, res) => {
 });
 
 // Delete artipod
-app.delete('/api/artipod/:artipodId', async (req, res) => {
+app.delete('/api/artipod/:artipodId', requireAuth, async (req, res) => {
   const { artipodId } = req.params;
   const artipodPath = join(__dirname, '../artipods', artipodId);
   
@@ -776,7 +1462,7 @@ app.delete('/api/artipod/:artipodId', async (req, res) => {
 });
 
 // Legacy delete route
-app.delete('/api/file/:filename', async (req, res) => {
+app.delete('/api/file/:filename', requireAuth, async (req, res) => {
   const { filename } = req.params;
   // Check if it's a UUID (artipodId)
   const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -845,7 +1531,7 @@ app.get('/api/featured/:filename', (req, res) => {
 });
 
 // Upload thumbnail - saves thumbnail.png inside artipod folder
-app.post('/api/thumbnail', (req, res) => {
+app.post('/api/thumbnail', requireAuth, (req, res) => {
   const { imageData, artipodId } = req.body;
   
   if (!imageData || !artipodId) {
@@ -890,7 +1576,7 @@ app.post('/api/thumbnail', (req, res) => {
 });
 
 // Add or update a featured pulse - now uses artipodId
-app.post('/api/featured', (req, res) => {
+app.post('/api/featured', requireAuth, (req, res) => {
   const { artipodId, title, thumbnail } = req.body;
   
   if (!artipodId) {
@@ -908,7 +1594,7 @@ app.post('/api/featured', (req, res) => {
 });
 
 // Remove a featured pulse
-app.delete('/api/featured/:filename', (req, res) => {
+app.delete('/api/featured/:filename', requireAuth, (req, res) => {
   const { filename } = req.params;
   const removed = removeFeatured(filename);
   
