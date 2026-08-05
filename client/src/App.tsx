@@ -9,6 +9,7 @@ import { Card, CardContent } from '@mieweb/ui/components/Card';
 import { Button } from '@mieweb/ui/components/Button';
 import { Alert } from '@mieweb/ui/components/Alert';
 import { Input } from '@mieweb/ui/components/Input';
+import { Select } from '@mieweb/ui/components/Select';
 import { Checkbox } from '@mieweb/ui/components/Checkbox';
 import { Modal, ModalHeader, ModalTitle, ModalClose, ModalBody, ModalFooter } from '@mieweb/ui/components/Modal';
 import { SpinnerWithLabel } from '@mieweb/ui/components/Spinner';
@@ -1358,6 +1359,9 @@ function App() {
   /** A run needs a provider — this server's, or one this browser supplied. */
   const canRunAgent = agentAvailable || !!agentProvider;
 
+  /** Transcription providers in the shape the ui Select wants. */
+  const providerOptions = providers.map((p) => ({ value: p.id, label: p.displayName }));
+
   /**
    * The agent runs already on this pulse, oldest first, up to the version being
    * viewed. Not decoration: the server replays the LAST agent run into the next
@@ -2179,19 +2183,16 @@ function App() {
           />
           {viewState === 'ready' && (
             <>
-              <select
-                className="app__provider-dropdown"
+              <Select
+                options={providerOptions}
                 value={selectedProvider}
-                onChange={(e) => setSelectedProvider(e.target.value)}
+                onValueChange={setSelectedProvider}
                 disabled={providers.length === 0}
-                aria-label="Transcription Provider"
-              >
-                {providers.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.displayName}
-                  </option>
-                ))}
-              </select>
+                size="sm"
+                label="Transcription provider"
+                hideLabel
+                className="w-52"
+              />
               <Button
                 size="sm"
                 onClick={() => handleTranscribe(false)}
@@ -2214,20 +2215,16 @@ function App() {
 
           {viewState === 'viewing' && (
             <>
-              <select
-                className="app__provider-dropdown"
+              <Select
+                options={providerOptions}
                 value={selectedProvider}
-                onChange={(e) => setSelectedProvider(e.target.value)}
+                onValueChange={setSelectedProvider}
                 disabled={providers.length === 0}
-                aria-label="Transcription Provider"
-                title="Provider used when re-transcribing"
-              >
-                {providers.map((provider) => (
-                  <option key={provider.id} value={provider.id}>
-                    {provider.displayName}
-                  </option>
-                ))}
-              </select>
+                size="sm"
+                label="Provider used when re-transcribing"
+                hideLabel
+                className="w-52"
+              />
                 <Button
                   size="sm"
                   variant="secondary"
