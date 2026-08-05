@@ -1117,8 +1117,12 @@ function App() {
 
   const openAgentModal = () => {
     if (agentStatus === 'running') return;
-    // With no provider at all, the useful thing to show first is how to add one.
-    setShowModelMenu(!agentAvailable && !agentProvider);
+    // Deliberately does NOT open the model menu, even with no provider set. A
+    // menu that opens itself covers the conversation and has to be dismissed
+    // before anything else can happen, every single time. The unconfigured
+    // state is signalled instead by the model line promoting itself to "Choose
+    // an AI" — findable without being in the way.
+    setShowModelMenu(false);
     setShowAgentModal(true);
   };
 
@@ -1426,12 +1430,17 @@ function App() {
       )?.id ?? 'custom')
     : null;
 
-  /** What the model line under the composer reads. */
+  /**
+   * What the model line reads. With nothing configured it becomes an
+   * instruction rather than a status — "No AI configured" tells you the problem
+   * and leaves you to find the cure, which is how the auto-opening menu came to
+   * exist in the first place.
+   */
   const agentModelLabel = agentProvider
     ? agentProvider.model
     : agentAvailable
       ? 'Shared AI'
-      : 'No AI configured';
+      : 'Choose an AI';
 
   const agentAccountLine = agentProvider
     ? `${agentProvider.model} · your account`
@@ -1525,7 +1534,7 @@ function App() {
                 : dictationState === 'transcribing'
                   ? 'Writing that down…'
                   : 'Tell it what to change, or hold the mic'
-              : 'Pick an AI below to use AI edits'
+              : 'Choose an AI below to start editing'
           }
           disabled={!canRunAgent}
           variant="minimal"
@@ -1573,7 +1582,15 @@ function App() {
                 // giving two unlike controls the same shape a row apart implies
                 // they do the same thing. Rounded-full so the hover background
                 // matches the shapes around it rather than introducing a corner.
-                className="text-muted-foreground hover:text-foreground hover:bg-muted flex min-w-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs transition-colors"
+                className={
+                  canRunAgent
+                    ? 'text-muted-foreground hover:text-foreground hover:bg-muted flex min-w-0 items-center gap-1.5 rounded-full px-2 py-1 text-xs transition-colors'
+                    // Nothing configured: this is the only thing worth pressing
+                    // on the whole panel, so it stops whispering. Still the same
+                    // control in the same place — it gains weight, it does not
+                    // move or turn into something else.
+                    : 'text-primary-800 dark:text-primary-300 border-primary-200 dark:border-primary-800 hover:bg-primary-50 dark:hover:bg-primary-900/20 flex min-w-0 items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors'
+                }
               >
                 <SparklesIcon size="sm" className="h-3.5 w-3.5 shrink-0" />
                 <span className="truncate">{agentModelLabel}</span>
