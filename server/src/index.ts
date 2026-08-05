@@ -1,5 +1,6 @@
 import express from 'express';
 import cors from 'cors';
+import compression from 'compression';
 import multer from 'multer';
 import { randomUUID, createHash } from 'crypto';
 import { fileURLToPath } from 'url';
@@ -65,6 +66,16 @@ const upload = multer({
 });
 
 // Middleware
+// gzip everything compressible, before any route or static handler can reply.
+//
+// Nothing was compressing responses at all: the client bundle went out as
+// ~580 kB of raw JavaScript on every first load, and the JSON transcript
+// endpoints are highly repetitive text that gzip crushes. This is the single
+// largest thing affecting how fast the app feels on a phone.
+//
+// `compression` skips anything already compressed (mp4, jpg) by content type,
+// so artipod media is untouched.
+app.use(compression());
 app.use(cors());
 app.use(express.json({ limit: '10mb' })); // Increased limit for base64 image uploads
 
