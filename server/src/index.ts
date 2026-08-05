@@ -1151,7 +1151,6 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuthUnlessOwnKey, (req, re
       Array.isArray(existing.editedWords) && existing.editedWords.length > 0
         ? existing.editedWords
         : buildBaseline(words);
-    const priorUndoStack = Array.isArray(existing.undoStack) ? existing.undoStack : [];
     const priorSpeedMarkers = Array.isArray(existing.speedMarkers) ? existing.speedMarkers : [];
     const priorDefaultSpeed =
       typeof existing.defaultSpeed === 'number' ? existing.defaultSpeed : 1;
@@ -1231,7 +1230,16 @@ app.post('/api/artipod/:artipodId/agent-edit', requireAuthUnlessOwnKey, (req, re
 
     const editsData = {
       editedWords: result.editedWords,
-      undoStack: [...priorUndoStack, priorEditedWords],
+      // An agent run is a new baseline, not a word-level step, so it leaves the
+      // editor's undo stack empty. Pushing the pre-run words onto it instead
+      // made the two undo paths disagree: MediaEditor's Undo button drains its
+      // own stack before it will call onUndoBeyond, so the button undid a word
+      // while ⌘Z (which knows the current checkpoint is an AI run) undid the
+      // whole run. Only the button moved, so the timeline cursor stayed put and
+      // the speed markers — which live on the checkpoint, not the stack — were
+      // left behind. The checkpoint holds the complete prior state, so the
+      // timeline is the right granularity for undoing this.
+      undoStack: [],
       speedMarkers: result.speedMarkers,
       defaultSpeed: priorDefaultSpeed,
       checkpoints,
