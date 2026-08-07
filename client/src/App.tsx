@@ -54,6 +54,7 @@ import { rasterizeLowerThird } from './lib/rasterize';
 import type { Provider, TranscriptionResult, FeaturedPulse, ArtipodListItem, EditableWord, SpeedMarker, PlaybackSpeed } from './types';
 import { isDebugEnabled, toggleDebug } from './debug';
 import { myUploadIds, rememberMyUpload } from './lib/myUploads';
+import { useTouchWordSelection } from './lib/touchWordSelection';
 import {
   loadAgentProvider,
   saveAgentProvider,
@@ -314,6 +315,8 @@ function App() {
   const contentRef = useRef<HTMLElement>(null);
   /** The AI-edit modal's scrolling body, so it can open on the newest turn. */
   const agentScrollRef = useRef<HTMLDivElement>(null);
+  /** The pane holding MediaEditor, so touch can drive its word selection. */
+  const editorPaneRef = useRef<HTMLDivElement>(null);
   const hasAutoTranscribed = useRef(false);
   const saveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   /** Held in a ref so the save callbacks handed to MediaEditor keep a stable
@@ -1372,6 +1375,10 @@ function App() {
   };
 
   // Render API Key Modal
+  // Selecting a range of words is mouse-only inside MediaEditor, so on a phone
+  // it does not exist. This translates touch into the events it expects.
+  useTouchWordSelection(editorPaneRef, viewState === 'viewing' && viewMode !== 'data');
+
   /** A run needs a provider — this server's, or one this browser supplied. */
   const canRunAgent = agentAvailable || !!agentProvider;
 
@@ -1465,8 +1472,22 @@ function App() {
       open={showAgentModal}
       onOpenChange={(open) => !open && setShowAgentModal(false)}
       size="md"
-      // `relative` so the connect-your-own-AI pane can cover this dialog.
-      className="relative"
+      className={[
+        // `relative` so the connect-your-own-AI card can cover this dialog.
+        'relative',
+        // ui's Modal is full-screen below 640px on purpose (`min-h-dvh`,
+        // `rounded-none`). That is right for a form you have navigated to, and
+        // wrong for a chat you popped open: with no conversation yet it renders
+        // as a whole-screen slab holding one paragraph and a text box.
+        //
+        // Bottom sheet instead, which is what a chat surface looks like on a
+        // phone: sits on the bottom edge, only as tall as its content, capped
+        // so the page stays visible behind it, rounded where it meets the page.
+        // twMerge resolves these against the library's own classes, and every
+        // override is mobile-only — at sm+ the desktop dialog is untouched.
+        'min-h-0 self-end rounded-t-2xl max-h-[85dvh]',
+        'sm:self-auto sm:rounded-xl sm:max-h-[calc(100dvh-2rem)]',
+      ].join(' ')}
     >
       <ModalHeader>
         <div className="flex min-w-0 items-center gap-3">
@@ -2207,12 +2228,18 @@ function App() {
         </div>
 
         <div className="app__toolbar-right">
-          <BrandSelector />
-          <ThemeToggle
-            mode="three-way"
-            variant="ghost"
-            aria-label="Toggle color theme"
-          />
+          {/* Brand and theme are the least-used controls in this bar and the
+              widest. On a phone they push the primary actions onto extra rows,
+              so they move into the ☰ menu below — hidden here, shown there,
+              never both. */}
+          <span className="hidden items-center gap-3 sm:flex">
+            <BrandSelector />
+            <ThemeToggle
+              mode="three-way"
+              variant="ghost"
+              aria-label="Toggle color theme"
+            />
+          </span>
           {viewState === 'ready' && (
             <>
               <Select
@@ -2223,7 +2250,7 @@ function App() {
                 size="sm"
                 label="Transcription provider"
                 hideLabel
-                className="w-52"
+                className="w-36 sm:w-52"
               />
               <Button
                 size="sm"
@@ -2255,7 +2282,7 @@ function App() {
                 size="sm"
                 label="Provider used when re-transcribing"
                 hideLabel
-                className="w-52"
+                className="w-36 sm:w-52"
               />
                 <Button
                   size="sm"
@@ -2347,6 +2374,15 @@ function App() {
       {/* Dropdown menu */}
       {menuOpen && (
         <div className="app__menu">
+          {/* Only on the widths where the toolbar drops them. */}
+          <div className="flex items-center justify-between gap-3 px-3 py-2 sm:hidden">
+            <BrandSelector />
+            <ThemeToggle
+              mode="three-way"
+              variant="ghost"
+              aria-label="Toggle color theme"
+            />
+          </div>
           <button className="app__menu-item" onClick={handleNewPulse}>
             📁 New Pulse
           </button>
@@ -2443,6 +2479,7 @@ function App() {
               // for. Capture phase so it registers before the editor handles it.
               onPointerDownCapture={() => { transcriptRebuildRef.current = false; }}
               onKeyDownCapture={() => { transcriptRebuildRef.current = false; }}
+              ref={editorPaneRef}
             >
               <MediaEditor
                 key={editorEpoch}
