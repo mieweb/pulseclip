@@ -527,3 +527,30 @@
     display: none;
   }
 }
+
+/**
+ * The edit history is a side pane on desktop, which cannot work on a phone:
+ * below the split point the shell stops being a fixed two-pane layout and
+ * becomes normal page flow, so the panel stacked underneath the FULL length of
+ * the transcript and landed ~1800px down a 660px screen. Pressing History
+ * looked like it did nothing at all.
+ *
+ * It becomes a bottom sheet instead — the same shape the AI chat takes at this
+ * width, and for the same reason: on a phone a side panel is a sheet. Matching
+ * 28px top corners and 85dvh so the two surfaces read as siblings.
+ *
+ * Must come after the base .app__history-pane rule above to win on source
+ * order; a media query adds no specificity of its own.
+ */
+@media (max-width: 767px) {
+  .app__history-pane {
+    position: fixed;
+    inset: auto 0 0 0;
+    z-index: 40;
+    height: 85dvh;
+    border-top: none;
+    border-radius: 28px 28px 0 0;
+    background: var(--color-card, #fff);
+    box-shadow: 0 -8px 30px rgb(0 0 0 / 25%);
+  }
+}
