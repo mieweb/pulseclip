@@ -513,3 +513,17 @@
     transform: rotate(360deg);
   }
 }
+
+/**
+ * Hides a toolbar control at phone widths.
+ *
+ * A Tailwind `hidden` cannot do this job: this file is unlayered, and unlayered
+ * declarations outrank everything in `@layer utilities`, so `.app__icon-btn
+ * { display: flex }` beats it. A media query adds no specificity either, so
+ * this also has to come LAST in the file to win on source order.
+ */
+@media (max-width: 639px) {
+  .app__desktop-only {
+    display: none;
+  }
+}

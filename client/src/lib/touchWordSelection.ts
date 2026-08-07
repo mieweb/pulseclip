@@ -40,6 +40,8 @@ import { useEffect } from 'react';
 const HOLD_MS = 400;
 /** Movement beyond this before the hold completes is a scroll, not a selection. */
 const SLOP_PX = 10;
+/** Two taps closer together than this on the same word mean "edit that word". */
+const DOUBLE_TAP_MS = 300;
 
 /** MediaEditor renders each word with role="option". */
 const WORD_SELECTOR = '[role="option"]';
@@ -86,6 +88,8 @@ export function useTouchWordSelection(
     let startY = 0;
     let word: Element | null = null;
     let selecting = false;
+    let lastTapWord: Element | null = null;
+    let lastTapAt = 0;
 
     const cancelHold = () => {
       if (holdTimer !== null) {
@@ -158,18 +162,50 @@ export function useTouchWordSelection(
     };
 
     const finish = (e: TouchEvent) => {
+      const wasSelecting = selecting;
+      const pressed = word;
       cancelHold();
-      if (selecting) {
+      if (wasSelecting) {
         const t = e.changedTouches[0];
         synthesizeMouse(document, 'mouseup', t?.clientX ?? startX, t?.clientY ?? startY);
       }
       selecting = false;
       word = null;
+
+      // Double-tap opens the word editor.
+      //
+      // On desktop that is a long press, but long press now means "select" on
+      // touch, and MediaEditor's own version never fired here anyway — so
+      // without this there is no way to correct a misheard word on a phone.
+      //
+      // It works by driving the desktop path rather than duplicating it: press
+      // and simply do not release. MediaEditor's own 500ms timer then fires and
+      // opens the editor, exactly as it would under a mouse.
+      if (wasSelecting || !pressed) return;
+      const now = e.timeStamp || performance.now();
+      if (lastTapWord === pressed && now - lastTapAt < DOUBLE_TAP_MS) {
+        lastTapWord = null;
+        // Suppress the browser's own synthesized mouse events for this tap.
+        // They are the reason a naive version of this does nothing: the
+        // synthetic mouseup lands ~18ms after its mousedown and cancels the
+        // very long-press timer we are trying to let expire. Requires the
+        // touchend listener to be non-passive.
+        e.preventDefault();
+        synthesizeMouse(pressed, 'mousedown', startX, startY);
+        window.setTimeout(() => {
+          synthesizeMouse(document, 'mouseup', startX, startY);
+        }, 550);
+        return;
+      }
+      lastTapWord = pressed;
+      lastTapAt = now;
     };
 
     root.addEventListener('touchstart', onTouchStart, { passive: true });
     root.addEventListener('touchmove', onTouchMove, { passive: false });
-    root.addEventListener('touchend', finish, { passive: true });
+    // Non-passive: the double-tap path has to be able to cancel the browser's
+    // synthesized mouse events. Nothing else here calls preventDefault.
+    root.addEventListener('touchend', finish, { passive: false });
     root.addEventListener('touchcancel', finish, { passive: true });
 
     return () => {

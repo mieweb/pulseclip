@@ -1558,11 +1558,20 @@ function App() {
               ))}
             </div>
           ) : (
-            <p className="text-muted-foreground m-0 text-sm">
-              Say what you want and the AI proposes it in the editor for you to review.
-              It can cut, reorder, and change the pace. Nothing is exported, and ⌘Z
-              undoes the whole proposal.
-            </p>
+            // Empty state, shaped like AIChat's own: the mark, one line, and the
+            // openers. It used to be a paragraph explaining what the feature
+            // does, which is the sort of thing that reads as documentation
+            // rather than product — the starters below say it better by being
+            // pressable.
+            <div className="flex h-full flex-col items-center justify-center gap-3 py-6 text-center">
+              <div
+                aria-hidden="true"
+                className="bg-primary-800 flex h-14 w-14 items-center justify-center rounded-full text-white"
+              >
+                <SparklesIcon size="lg" className="h-7 w-7" />
+              </div>
+              <p className="m-0 text-base font-medium">What should we change?</p>
+            </div>
           )}
         </div>
       </ModalBody>
@@ -2306,6 +2315,9 @@ function App() {
 
           {viewState === 'viewing' && (
             <>
+              {/* Desktop only. On a phone this and the icon buttons below live
+                  in the ☰ menu, so the bar keeps to one row of the three things
+                  you actually came here to press. */}
               <Select
                 options={providerOptions}
                 value={selectedProvider}
@@ -2314,7 +2326,7 @@ function App() {
                 size="sm"
                 label="Provider used when re-transcribing"
                 hideLabel
-                className="w-36 sm:w-52"
+                className="hidden w-52 sm:block"
               />
                 <Button
                   size="sm"
@@ -2362,7 +2374,7 @@ function App() {
                  'Export'}
               </Button>
               <button
-                className={`app__icon-btn app__data-toggle ${viewMode === 'data' ? 'app__data-toggle--active' : ''}`}
+                className={`app__icon-btn app__data-toggle app__desktop-only ${viewMode === 'data' ? 'app__data-toggle--active' : ''}`}
                 onClick={() => setViewMode(viewMode === 'data' ? 'transcript' : 'data')}
                 title={viewMode === 'data' ? 'Show transcript' : 'Show Artipod Folder'}
                 aria-label={viewMode === 'data' ? 'Show transcript' : 'Show Artipod Folder'}
@@ -2391,7 +2403,7 @@ function App() {
                 </button>
               )}
               <button
-                className="app__icon-btn app__retranscribe-btn"
+                className="app__icon-btn app__retranscribe-btn app__desktop-only"
                 onClick={handleRetranscribe}
                 title="Re-transcribe (ignore cache)"
                 aria-label="Re-transcribe"
@@ -2406,14 +2418,50 @@ function App() {
       {/* Dropdown menu */}
       {menuOpen && (
         <div className="app__menu">
-          {/* Only on the widths where the toolbar drops them. */}
-          <div className="flex items-center justify-between gap-3 px-3 py-2 sm:hidden">
-            <BrandSelector />
-            <ThemeToggle
-              mode="three-way"
-              variant="ghost"
-              aria-label="Toggle color theme"
-            />
+          {/* Everything the toolbar drops on small screens. Relocated, not
+              removed — the bar keeps AI edit, History and Export, and the rest
+              lives one tap away rather than on a third wrapped row. */}
+          <div className="flex flex-col gap-2 px-3 py-2 sm:hidden">
+            <div className="flex items-center justify-between gap-3">
+              <BrandSelector />
+              <ThemeToggle
+                mode="three-way"
+                variant="ghost"
+                aria-label="Toggle color theme"
+              />
+            </div>
+            {viewState === 'viewing' && (
+              <>
+                <Select
+                  options={providerOptions}
+                  value={selectedProvider}
+                  onValueChange={setSelectedProvider}
+                  disabled={providers.length === 0}
+                  size="sm"
+                  label="Transcription provider"
+                  hideLabel
+                  className="w-full"
+                />
+                <div className="flex gap-2">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="flex-1"
+                    onClick={() => { setViewMode(viewMode === 'data' ? 'transcript' : 'data'); setMenuOpen(false); }}
+                  >
+                    📁 {viewMode === 'data' ? 'Transcript' : 'Files'}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="flex-1"
+                    onClick={() => { handleRetranscribe(); setMenuOpen(false); }}
+                  >
+                    🔄 Re-transcribe
+                  </Button>
+                </div>
+              </>
+            )}
           </div>
           <button className="app__menu-item" onClick={handleNewPulse}>
             📁 New Pulse
