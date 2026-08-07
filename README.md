@@ -7,9 +7,22 @@
 ## Features
 
 - 🎙️ **Audio & Video Upload** - Drag and drop support for common formats (MP3, WAV, MP4, MOV)
+- 📱 **Record on your phone** - Pair PulseCam by QR; the clip uploads straight into a pulse
 - 🔌 **Pluggable Providers** - Provider-agnostic architecture (AssemblyAI cloud + local Whisper)
 - 📝 **Word-Level Timestamps** - Precise timestamp tracking for every word
 - 🎯 **Interactive Transcript** - Click any word to seek media playback
+- ✂️ **Edit like a document** - Delete, cut, paste and reorder words; silent gaps become
+  editable chips you can remove in one pass
+- ⏩ **Re-time a passage** - Set a playback speed over a selection; the export bakes it in
+- ✨ **AI editing** - Say what you want in plain English and the agent proposes it in the editor
+  for you to review. It edits by operations (delete / move / speed) against the original word
+  numbering, never auto-exports, and ⌘Z undoes the whole proposal. Bring your own LLM key, or
+  use the server's if one is configured
+- 🎤 **Dictate the instruction** - Speak it instead of typing; transcribed on-box by local Whisper
+- 🕘 **Edit history** - Every AI run and hand edit on one timeline, with per-version diffs,
+  rename, and undo/redo across versions
+- 🎬 **Export** - Render the edited timeline to a new file, with optional burnt-in captions and
+  a brand lower-third
 - 🔍 **Raw Data Access** - View original provider responses for debugging
 - 🎨 **Normalized Schema** - Provider-agnostic transcript format for UI consistency
 
@@ -159,6 +172,43 @@ Returns list of available transcription providers.
   ]
 }
 ```
+
+### POST /api/dictate
+Transcribe a short audio clip and return plain text. Backs the microphone in the AI-edit
+composer, so an instruction can be spoken rather than typed.
+
+Always the local Whisper provider — dictation is incidental to writing an instruction and should
+not spend a deployment's paid transcription quota. Distinct from `/api/transcribe`, which works on
+media already stored in an artipod and caches against that file: this takes a throwaway blob,
+returns text, and keeps nothing. Capped at 10 MB.
+
+**Request:** multipart/form-data with an `audio` field
+
+**Response:**
+```json
+{
+  "success": true,
+  "text": "cut this down to about sixty seconds",
+  "provider": { "id": "whisper", "displayName": "Whisper (base.en)" }
+}
+```
+
+### POST /api/artipod/:artipodId/agent-edit
+Ask the editorial agent for an edit; returns a job id to poll. The agent emits operations
+(`delete` / `move` / `speed`) indexed against the ORIGINAL word numbering, which the server
+resolves against a single snapshot — models are unreliable at renumbering after their own edits,
+so they are never asked to. The result is written as a new checkpoint for a human to review in the
+editor; nothing is exported automatically. Requires the app key when `SECRET_KEY` is set, since a
+run spends money or a shared rate limit. Callers may supply their own provider config to spend
+their own account instead.
+
+### GET /api/artipod/:artipodId/edits
+Editor state plus checkpoint metadata for the history timeline. Metadata only — an individual
+version's diff is fetched on demand.
+
+### POST /api/artipod/:artipodId/edits/restore
+Move the history cursor to another checkpoint. Restoring never truncates, so stepping back and
+forward is symmetric; only a new edit made while rewound abandons the versions ahead.
 
 ### POST /api/upload
 Upload a media file. Creates a new artipod with a UUID.
