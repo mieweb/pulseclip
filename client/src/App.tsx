@@ -1502,8 +1502,14 @@ function App() {
         //
         // Bottom sheet on a phone: sits on the bottom edge, rounded where it
         // meets the page, page still visible above it.
-        'min-h-0 self-end rounded-t-2xl',
-        'sm:self-auto sm:rounded-xl',
+        //
+        // 28px, not the library's 16px. Everything INSIDE this frame is softer
+        // than the frame was — the composer and the bubbles are 24px, the chips
+        // and the send button are fully round — so a 16px shell read as the
+        // sharpest thing on screen and made the whole panel look boxy. The
+        // outermost surface should be the softest, not the hardest.
+        'min-h-0 self-end rounded-t-[28px]',
+        'sm:self-auto sm:rounded-[28px]',
         // A FIXED height, not a content-driven one. A chat window is a fixed
         // frame that fills with messages; sizing it to its content meant an
         // empty conversation rendered as a squat 391px box and a full one as a
@@ -1751,7 +1757,7 @@ function App() {
           }}
         >
           <div
-            className="bg-card border-border flex w-full max-w-sm flex-col gap-3 rounded-xl border p-4 shadow-xl"
+            className="bg-card border-border flex w-full max-w-sm flex-col gap-3 rounded-2xl border p-4 shadow-xl"
             // A group, not a nested role="dialog": it does not trap focus, and
             // claiming to be a second dialog inside the first misdescribes it
             // to a screen reader.
