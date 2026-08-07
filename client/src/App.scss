@@ -554,3 +554,48 @@
     box-shadow: 0 -8px 30px rgb(0 0 0 / 25%);
   }
 }
+
+/**
+ * Bring the AI-chat composer onto this app's theme.
+ *
+ * @mieweb/ui's MessageComposer paints its own colours with hardcoded Tailwind
+ * neutrals rather than design tokens, which do not line up with the mieweb
+ * brand variables the surrounding dialog uses. Measured in dark mode:
+ *
+ *   dialog / card            #262626
+ *   composer input area      #171717   <- a darker slab painted over the card
+ *   the textarea             #262626   <- same as the card, so no field is visible
+ *   the textarea's border    1px #767676  <- the BROWSER default, not a design
+ *
+ * So the composer read as a black rectangle with a grey box drawn on it, inside
+ * a rounded panel. Three corrections, all using the app's own tokens so they
+ * follow the brand and both themes:
+ *
+ *   1. the input area stops painting a background at all and lets the card show
+ *   2. the field uses --mieweb-input, giving it real contrast against the card
+ *   3. the field drops the user-agent border it never meant to have
+ *
+ * Unlayered on purpose: these have to beat the component's own classes, which
+ * live in `@layer utilities`, and unlayered declarations outrank every layer.
+ */
+[data-slot='composer-input-area'] {
+  background: transparent;
+}
+
+[data-slot='composer-input'] {
+  background: var(--mieweb-input, #f5f5f5);
+  border: none;
+  box-shadow: none;
+}
+
+/**
+ * The rest of the preflight borrow (see mieweb-ui.css). Buttons were fixed
+ * there; every other form control still carries the user-agent's 1px border,
+ * which is what made the message field look like a box inside a panel.
+ */
+input,
+select,
+textarea {
+  border-width: 0;
+  border-style: solid;
+}
