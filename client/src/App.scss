@@ -550,7 +550,11 @@
     height: 85dvh;
     border-top: none;
     border-radius: 28px 28px 0 0;
-    background: var(--color-card, #fff);
+    // --color-card is NOT defined in this app (only the --mieweb-* set is), so
+    // this resolved to the #fff fallback and the sheet stayed white in dark
+    // mode. The desktop rule above escapes it only because its fallback is
+    // `transparent`, which inherits whatever is behind it.
+    background: var(--mieweb-card, #fff);
     box-shadow: 0 -8px 30px rgb(0 0 0 / 25%);
   }
 }
