@@ -1379,6 +1379,26 @@ function App() {
   // it does not exist. This translates touch into the events it expects.
   useTouchWordSelection(editorPaneRef, viewState === 'viewing' && viewMode !== 'data');
 
+  /**
+   * Open a pulse at the top of it.
+   *
+   * MediaEditor scrolls the active word into view whenever it changes, which is
+   * right during playback. On mount the active word goes from nothing to the
+   * first word, and on a phone — where the PAGE scrolls rather than a pane —
+   * that scroll runs against the document and lands you partway down, with the
+   * video already pushed off the top before you have touched anything.
+   *
+   * Correct it once, after that initial scroll has settled. Only on touch, and
+   * only per pulse: every later scroll is someone playing or reading, and must
+   * be left alone.
+   */
+  useEffect(() => {
+    if (viewState !== 'viewing' || !artipodId) return;
+    if (!window.matchMedia('(pointer: coarse)').matches) return;
+    const t = setTimeout(() => window.scrollTo({ top: 0, behavior: 'auto' }), 350);
+    return () => clearTimeout(t);
+  }, [viewState, artipodId]);
+
   /** A run needs a provider — this server's, or one this browser supplied. */
   const canRunAgent = agentAvailable || !!agentProvider;
 
@@ -1480,13 +1500,18 @@ function App() {
         // wrong for a chat you popped open: with no conversation yet it renders
         // as a whole-screen slab holding one paragraph and a text box.
         //
-        // Bottom sheet instead, which is what a chat surface looks like on a
-        // phone: sits on the bottom edge, only as tall as its content, capped
-        // so the page stays visible behind it, rounded where it meets the page.
-        // twMerge resolves these against the library's own classes, and every
-        // override is mobile-only — at sm+ the desktop dialog is untouched.
-        'min-h-0 self-end rounded-t-2xl max-h-[85dvh]',
-        'sm:self-auto sm:rounded-xl sm:max-h-[calc(100dvh-2rem)]',
+        // Bottom sheet on a phone: sits on the bottom edge, rounded where it
+        // meets the page, page still visible above it.
+        'min-h-0 self-end rounded-t-2xl',
+        'sm:self-auto sm:rounded-xl',
+        // A FIXED height, not a content-driven one. A chat window is a fixed
+        // frame that fills with messages; sizing it to its content meant an
+        // empty conversation rendered as a squat 391px box and a full one as a
+        // 968px one, so the same dialog was a different shape every time you
+        // opened it. Now it is the same tall frame either way and the
+        // conversation scrolls inside it — which is also why the composer stays
+        // put at the bottom instead of sliding up the screen as history grows.
+        'h-[85dvh]',
       ].join(' ')}
     >
       <ModalHeader>
@@ -1582,6 +1607,13 @@ function App() {
             <RecordButton
               variant="ghost"
               size="sm"
+              // RecordButton's own `sm` is 40x40, taller than the 36px input it
+              // sits in, so its round hover fill spilled past the field. The
+              // composer also centres this slot inside a hardcoded 44px box,
+              // which is 8px taller than our input renders, so the button
+              // needs pulling back up by half that to sit centred in the frame
+              // it is actually inside.
+              className="-mt-1.5 h-8 w-8 shrink-0 p-0"
               showPulse={false}
               showWaveform
               showTranscriptionState

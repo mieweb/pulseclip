@@ -112,7 +112,28 @@ export function useTouchWordSelection(
         // Drop any native text selection the long press may have started, so
         // the browser's own selection UI does not fight the editor's.
         window.getSelection?.()?.removeAllRanges();
-        if (word) synthesizeMouse(word, 'mousedown', startX, startY);
+        if (!word) return;
+        synthesizeMouse(word, 'mousedown', startX, startY);
+
+        // That mousedown starts MediaEditor's OWN 500ms long-press timer, the
+        // one that opens the word editor. Keep holding — which is exactly what
+        // you do while dragging out a selection — and the editor pops open over
+        // the top of it. Its only cancel paths are a mouseup, leaving the pane,
+        // or entering a word, so enter the word we are already on: that clears
+        // the timer and re-extends the selection to the anchor, which is where
+        // it already is. React derives onMouseEnter from mouseover, so it has
+        // to be mouseover rather than a literal mouseenter.
+        word.dispatchEvent(
+          new MouseEvent('mouseover', {
+            bubbles: true,
+            cancelable: true,
+            view: window,
+            button: 0,
+            buttons: 1,
+            clientX: startX,
+            clientY: startY,
+          })
+        );
       }, HOLD_MS);
     };
 
