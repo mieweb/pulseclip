@@ -1,0 +1,25 @@
+[Unit]
+Description=PulseClip Node.js service
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=pulseclip
+Group=pulseclip
+WorkingDirectory=/opt/pulseclip/server
+Environment=NODE_ENV=production
+Environment=PATH=/home/hgreen/.nvm/versions/node/v26.12.1/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin
+ExecStart=/home/hgreen/.nvm/versions/node/v26.12.1/bin/node /opt/pulseclip/server/dist/index.js
+Restart=on-failure
+RestartSec=5s
+TimeoutStopSec=30s
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=true
+ProtectHome=read-only
+ReadWritePaths=/opt/pulseclip/server/data /opt/pulseclip/server/cache /opt/pulseclip/server/tus-uploads
+
+[Install]
+WantedBy=multi-user.target
